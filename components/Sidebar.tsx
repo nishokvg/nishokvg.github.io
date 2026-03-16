@@ -44,16 +44,15 @@ export default function Sidebar() {
               <span className="absolute bottom-0.5 right-0.5 h-3.5 w-3.5 rounded-full bg-green-400 border-2 border-bg-secondary" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-text-primary">Nishok</h2>
-              <p className="text-xs font-mono text-accent mt-0.5">learning out loud</p>
+              <h2 className="text-base font-semibold text-text-primary">Nishok Vishnu Ganesan</h2>
+              <p className="text-xs font-mono text-accent mt-0.5">Senior SRE · Cloud & Platform Eng</p>
             </div>
           </div>
 
           <div className="border-t border-border" />
 
           <p className="text-xs text-text-secondary leading-relaxed text-center">
-            Writing about AI/ML experiments, random thoughts, and whatever else is on my mind.
-            No filter, just ruminatin&apos;.
+            15+ years in cloud platforms, Kubernetes &amp; distributed systems. Now learning AI/ML in public — documenting the journey one post at a time.
           </p>
 
           <div className="border-t border-border" />
@@ -61,19 +60,19 @@ export default function Sidebar() {
           {/* Social links */}
           <div className="space-y-2">
             <p className="text-xs font-semibold uppercase tracking-wider text-text-muted">Connect</p>
-            <a href="https://github.com/yourusername" target="_blank" rel="noopener noreferrer"
+            <a href="https://github.com/nishokvg" target="_blank" rel="noopener noreferrer"
               className="flex items-center gap-2.5 text-sm text-text-secondary hover:text-accent transition-colors py-1.5 px-2 rounded-md hover:bg-bg-tertiary group">
               <GithubIcon />
               <span className="group-hover:translate-x-0.5 transition-transform">GitHub</span>
               <span className="ml-auto text-xs text-text-muted font-mono opacity-0 group-hover:opacity-100 transition-opacity">↗</span>
             </a>
-            <a href="https://twitter.com/yourusername" target="_blank" rel="noopener noreferrer"
+            <a href="https://linkedin.com/in/nishok-v-g" target="_blank" rel="noopener noreferrer"
               className="flex items-center gap-2.5 text-sm text-text-secondary hover:text-accent transition-colors py-1.5 px-2 rounded-md hover:bg-bg-tertiary group">
               <TwitterIcon />
-              <span className="group-hover:translate-x-0.5 transition-transform">Twitter / X</span>
+              <span className="group-hover:translate-x-0.5 transition-transform">LinkedIn</span>
               <span className="ml-auto text-xs text-text-muted font-mono opacity-0 group-hover:opacity-100 transition-opacity">↗</span>
             </a>
-            <a href="mailto:your@email.com"
+            <a href="mailto:nishokvg@gmail.com"
               className="flex items-center gap-2.5 text-sm text-text-secondary hover:text-accent transition-colors py-1.5 px-2 rounded-md hover:bg-bg-tertiary group">
               <EmailIcon />
               <span className="group-hover:translate-x-0.5 transition-transform">Email</span>
