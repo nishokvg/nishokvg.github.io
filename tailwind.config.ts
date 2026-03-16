@@ -11,20 +11,20 @@ const config: Config = {
     extend: {
       colors: {
         bg: {
-          primary: "#0d1117",
-          secondary: "#161b22",
-          tertiary: "#21262d",
+          primary: "var(--bg-primary)",
+          secondary: "var(--bg-secondary)",
+          tertiary: "var(--bg-tertiary)",
         },
         text: {
-          primary: "#e6edf3",
-          secondary: "#8b949e",
-          muted: "#6e7681",
+          primary: "var(--text-primary)",
+          secondary: "var(--text-secondary)",
+          muted: "var(--text-muted)",
         },
         accent: {
-          DEFAULT: "#58a6ff",
-          hover: "#79b8ff",
+          DEFAULT: "var(--accent)",
+          hover: "var(--accent-hover)",
         },
-        border: "#30363d",
+        border: "var(--border)",
       },
       fontFamily: {
         sans: [
