@@ -1,0 +1,207 @@
+---
+title: "We Let AI Write Our Infrastructure Code — And It Killed Our Deployment Failures"
+date: "2026-03-16"
+tags: ["DevOps", "SRE", "Terraform", "Terragrunt", "AWS", "EKS", "Kubernetes", "ClaudeCode", "InfrastructureAsCode", "PlatformEngineering"]
+excerpt: "A war story about circular dependencies, zombie ENIs, and how Claude Code + a two-tier EKS refactor took us from 60% to 98% first-try deployments."
+---
+
+It was a Tuesday at 2:00 AM. I typed `terragrunt apply` to deploy a MicroStrategy Customer Managed Cloud environment — EKS cluster, Istio service mesh, OIDC integrations, the works. The control plane spun up. The nodes attached. And then... silence.
+
+Terraform was waiting for the AWS Load Balancer Controller to provision an NLB. The controller was waiting for an IAM role. The IAM role needed the cluster's OIDC provider URL. And the Kubernetes provider was trying to connect to an API endpoint that wasn't fully registered yet.
+
+When I hit `CTRL+C` and typed `terragrunt destroy`, the final boss appeared: zombie Elastic Network Interfaces refusing to let the security groups delete. I spent the next three hours manually hunting down AWS resources in the console.
+
+This is the story of how we broke our monolith, fixed the dependencies, and used Claude Code to build an architecture that actually lets us sleep at night.
+
+---
+
+## The "God Module" Problem
+
+Our original setup tried to do everything in a single Terragrunt execution — VPC, EKS cluster, Helm charts, IAM roles, OIDC configuration — all woven into one dependency graph.
+
+```
+[VPC] -> [EKS Cluster] <-> [Helm Charts]
+              ↓                  ↑
+         [IAM Roles] <---- [OIDC Provider]
+```
+
+Because the `hashicorp/kubernetes` and `helm` providers lived in the same module that *created* the EKS cluster, Terraform had to guess the API server state during planning. And AWS NLBs (triggered by Istio) take 15–20 minutes to provision, but our Helm timeout defaulted to 300 seconds — virtually guaranteeing first-run failure.
+
+| Metric | The "God Module" Era |
+|---|---|
+| Deployment Time | 45–60 minutes |
+| First-Try Success Rate | ~60% |
+| Teardown Time | 30+ min (hung on zombie ENIs) |
+| Blast Radius | Massive — a Helm tweak risked the control plane |
+
+We tried fixing it within the existing structure. First, a wrapper script that ran `terragrunt apply || terragrunt apply` — the DevOps equivalent of hitting a TV remote until the picture clears up. Then a 4-module split into network, cluster, roles, and helm. Better blast radius, but managing state outputs across four tightly coupled modules was its own nightmare.
+
+---
+
+## The Insight: Infrastructure Has Tectonic Plates
+
+The breakthrough came when I stopped looking at dependencies and started looking at **rate of change**.
+
+VPCs and KMS keys change once a year. The EKS control plane changes twice a year for version upgrades. But Istio, Fluent Bit, ALB controllers, and tenant node groups change *constantly*. Mixing fast-moving and slow-moving layers in one state file meant a simple Istio upgrade triggered a full refresh of the entire EKS control plane.
+
+The solution: draw a hard line between heavy infrastructure and volatile applications.
+
+```
+┌──────────────────────────────────────────────────────┐
+│  Tier 1: eks  (Heavy Infra - 15 min deploy)          │
+│  • EKS Cluster (v1.33) + Managed Node Groups (AL2023)│
+│  • Core Security Groups & KMS                        │
+└──────────────────────────────────────────────────────┘
+                   ↓ Strict Output Dependency
+┌──────────────────────────────────────────────────────┐
+│  Tier 2: eks-addons  (Volatile Layer - 5 min deploy) │
+│  • Kubernetes & Helm Provider Configs                 │
+│  • Istio, Calico, Fluent Bit, Cert Manager           │
+│  • IRSA Roles (OIDC-mapped)                          │
+└──────────────────────────────────────────────────────┘
+```
+
+Tier 1 guarantees the cluster API is active and the OIDC URL exists. Tier 2 can safely configure the Kubernetes provider because the cluster is *mathematically guaranteed* to be ready. The circular dependency simply ceases to exist.
+
+---
+
+## Code Efficiency: Keeping It DRY Across Environments
+
+Our Terragrunt directory tree reflects this split cleanly:
+
+```
+mstr-cmc/
+├── terragrunt/
+│   ├── _templates/              # Shared backup logic
+│   ├── _env/
+│   │   ├── kubernetes_helm_providers.hcl  # Shared k8s provider config
+│   │   └── provider_sdm.hcl              # Shared AWS provider config
+│   └── lsacone-dev/
+│       └── mstr-cmc-dev/        # Environment root
+│           ├── terragrunt.hcl   # Backend & tag generation
+│           ├── eks/
+│           │   └── terragrunt.hcl  # TIER 1
+│           └── eks-addons/
+│               └── terragrunt.hcl  # TIER 2
+```
+
+New environment? Copy the folder, update variables, run `apply-all`. No Terraform code duplication.
+
+Instead of copying `provider.tf` into 20 modules, we generate it dynamically from the root:
+
+```hcl
+# Root terragrunt.hcl
+generate "provider" {
+  path      = "provider_aws.tf"
+  if_exists = "overwrite_terragrunt"
+  contents  = <<EOF
+provider "aws" {
+  region       = "${local.aws_default_region}"
+  default_tags { tags = ${local.aws_provider_tags} }
+}
+EOF
+}
+```
+
+Update tagging taxonomy for billing compliance once — it cascades to thousands of resources instantly. Tier 2 pulls connection strings from Tier 1 through dependency blocks:
+
+```hcl
+# eks-addons/terragrunt.hcl
+dependency "eks" {
+  config_path = "../eks"
+}
+
+inputs = {
+  cluster_name      = dependency.eks.outputs.cluster_name
+  oidc_provider_arn = dependency.eks.outputs.oidc_provider_arn
+}
+```
+
+---
+
+## Fixing the Zombie ENIs (The Teardown War Story)
+
+Those 3AM zombie ENIs? Two separate anti-patterns.
+
+**Problem 1:** IAM roles with attached policies hang indefinitely during deletion if policies aren't detached first. **Fix:** `force_detach_policies = true` on every IRSA role.
+
+**Problem 2:** Nodes can't communicate with the EKS API during teardown, orphaning ENIs attached to security groups. **Fix:** Explicit egress rule allowing node-to-control-plane traffic on port 443:
+
+```hcl
+# modules/MSTR-CMC/refactor-eks/eks-cluster.tf
+egress_control_plane_443 = {
+  description                   = "Allow nodes to communicate with control plane API"
+  protocol                      = "tcp"
+  from_port                     = 443
+  to_port                       = 443
+  type                          = "egress"
+  source_cluster_security_group = true
+}
+```
+
+`terragrunt destroy` went from a 40-minute gamble to a reliable 10-minute operation.
+
+---
+
+## How Claude Code Changed the Workflow
+
+I didn't rewrite thousands of lines of HCL, YAML, and Groovy by hand. Claude Code generated a significant portion of it. But just telling an AI "build me an EKS cluster" gets you generic, insecure boilerplate. So we built what we call the **3-Tier Skill Architecture**:
+
+- **L1 (Discovery):** YAML metadata so Claude knows what deployment skills are available
+- **L2 (Logic):** Markdown files with strict safety rules (e.g., "Always execute with `--dry-run` first for prod")
+- **L3 (Execution):** The actual Python/Bash engines
+
+When we needed to migrate 51 Docker images from MSTR's registry to our private AWS ECR, Claude generated a 150+ line parallelized Jenkins pipeline using Skopeo — complete with `jq` parsing, STS authentication, and retry logic. When Fluent Bit sidecars threw `AccessDeniedException` to CloudWatch, I fed Claude the error logs and IAM config. It identified the `StringEquals` trust policy failing on MSTR's dynamic namespaces and recommended scoping it properly.
+
+> **Security note:** The fix was `StringLike = "system:serviceaccount:mstr-*:fluentbit"` — scoped to the tenant prefix. Never use unscoped wildcards like `*:*` in production.
+
+**Honest limitations:** Claude hallucinated Terragrunt `mock_outputs` names until I gave it the exact dependency chain. It generated deprecated provider syntax a few times. You cannot blindly apply AI-generated IaC — architect-level review is non-negotiable.
+
+| Task | Without Claude Code | With Claude Code | Time Saved |
+|---|---|---|---|
+| Jenkins Migration Pipeline | 3–4 hours | 45 minutes | ~80% |
+| Terragrunt DRY Refactoring | 2 days | 4 hours | ~75% |
+| Troubleshooting IAM/IRSA bugs | 2–3 hours | 15 minutes | ~90% |
+
+---
+
+## The Proof: EKS 1.33 Upgrade
+
+The architecture proved itself during the EKS 1.33 upgrade. Amazon deprecated Amazon Linux 2 AMIs, requiring migration to `AL2023_x86_64_STANDARD`. In the old monolith, changing the base AMI would have triggered a full state refresh across every application resource.
+
+With the Clean Split, it was a Tier 1-only change. Updated the AMI family, ran a rolling node group update, verified — without touching a single Helm chart or IRSA role in Tier 2. What would have been a full-day, high-anxiety operation became a focused 30-minute change.
+
+| Metric | Before (Monolith) | After (Two-Tier + AI) | Improvement |
+|---|---|---|---|
+| Deployment Success Rate | ~60% | 98% | +38% |
+| New Tenant Provisioning | 2 days | 45 minutes | 95% faster |
+| Code Duplication | High (copy/paste) | Near zero (DRY generate) | Massive |
+| Incident Resolution (MTTR) | Hours | Minutes | ~80% faster |
+
+On-call is no longer an exercise in terror. If a tenant goes down, I can tear down and rebuild their entire Tier 2 in 5 minutes without touching the cluster.
+
+---
+
+## Lessons I'd Tattoo on My Forearm
+
+**Wait for the load balancer.** AWS NLBs take 15–20 minutes to provision. If your Istio Helm chart times out at 300 seconds, your pipeline *will* fail. We bumped timeouts to 1800 seconds.
+
+**Always `force_detach_policies = true`.** If you don't, Terraform hangs indefinitely on destroy. I wish I'd known this five years ago.
+
+**AI needs guardrails, not just prompts.** Claude is powerful, but it will hallucinate provider syntax if you don't constrain it. The 3-Tier Skill Architecture forced deterministic, dry-run-tested execution instead of cowboy-coding.
+
+**Solve DNS before automating OIDC.** In an automated pipeline, OIDC integrations fail if DNS hasn't propagated. We built a decoupled DNS polling module to wait for ALB readiness before firing OIDC scripts.
+
+**Separate infrastructure by rate of change.** This is the single most important lesson. When Tier 1 and Tier 2 can't interfere with each other's state, an entire class of deployment bugs simply vanishes.
+
+---
+
+## What's Next
+
+We're evaluating moving dynamic node provisioning to **Karpenter** — the two-tier architecture makes this straightforward since node changes are isolated in Tier 1. The goal is aggressive cost optimization: instantly terminating nodes the moment a MSTR tenant scales down.
+
+The future of SRE isn't writing syntax. It's directing architecture and letting AI handle the boilerplate. The engineers who learn to work *with* these tools will build in a week what used to take a quarter.
+
+---
+
+*Are you still copy-pasting provider blocks by hand? It might be time to rethink your boundaries.*

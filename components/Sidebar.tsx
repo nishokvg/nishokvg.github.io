@@ -1,4 +1,5 @@
 import React from "react";
+import Image from "next/image";
 
 const GithubIcon = () => (
   <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -38,8 +39,15 @@ export default function Sidebar() {
           {/* Avatar */}
           <div className="flex flex-col items-center text-center space-y-3">
             <div className="relative">
-              <div className="h-20 w-20 rounded-full bg-gradient-to-br from-accent/30 to-accent/10 border-2 border-accent/40 flex items-center justify-center">
-                <span className="text-3xl font-bold text-accent/70 font-mono select-none">N</span>
+              <div className="h-20 w-20 rounded-full border-2 border-accent/40 overflow-hidden">
+                <Image
+                  src="/profile.jpg"
+                  alt="Nishok Vishnu Ganesan"
+                  width={80}
+                  height={80}
+                  className="object-cover object-top w-full h-full"
+                  priority
+                />
               </div>
               <span className="absolute bottom-0.5 right-0.5 h-3.5 w-3.5 rounded-full bg-green-400 border-2 border-bg-secondary" />
             </div>
