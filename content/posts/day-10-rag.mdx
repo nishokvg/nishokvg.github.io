@@ -1,0 +1,24 @@
+---
+title: "Day 10: RAG - Retrieval Augmented Generation"
+date: "2026-03-16"
+tags: ["RAG", "FAISS", "embeddings", "LLM"]
+excerpt: "Building an end-to-end RAG pipeline using cosine similarity and FAISS for scalable vector search."
+---
+
+## What is RAG?
+
+Retrieval Augmented Generation (RAG) is a technique that enhances large language models by grounding their responses in external, up-to-date knowledge. Instead of relying solely on what was baked into the model during training, RAG adds a retrieval step: given a user query, the system first fetches the most relevant documents from a knowledge base, then passes those documents alongside the query to the LLM as context. The result is a model that can answer questions about information it was never trained on — whether that's your private company docs, recent news, or a specialized domain corpus.
+
+The core insight is simple but powerful: LLMs are excellent at reasoning and synthesis, but their parametric knowledge is frozen at training time. RAG effectively gives the model a dynamic, updatable "memory" by separating retrieval from generation. This also helps with hallucination — when the model is shown the actual source material, it has far less room to fabricate answers.
+
+## Basic Cosine Similarity vs FAISS
+
+At its simplest, RAG retrieval works by converting both the query and each document chunk into dense vector embeddings using a model like `sentence-transformers` or OpenAI's embedding API. Retrieval is then a nearest-neighbor search: find the document vectors closest to the query vector. Cosine similarity is the standard distance metric here — it measures the angle between two vectors, which captures semantic similarity well regardless of vector magnitude.
+
+For small datasets (say, a few hundred documents), a brute-force cosine similarity search over all chunks is perfectly fine. But this approach does not scale — comparing against millions of vectors one by one quickly becomes a bottleneck. This is where **FAISS** (Facebook AI Similarity Search) comes in. FAISS is a library optimized for efficient similarity search over large vector collections. It uses approximate nearest neighbor (ANN) algorithms — such as IVF (inverted file index) and HNSW (hierarchical navigable small world graphs) — to dramatically reduce search time. Instead of scanning every vector, FAISS clusters them and only searches the most promising clusters. The trade-off is a small loss in recall accuracy in exchange for massive speed gains, which is almost always worth it in production.
+
+## Chunking Strategy
+
+One of the most underrated aspects of RAG is chunking — how you split your source documents before embedding them. Chunk too large and you embed too much noise into a single vector, making retrieval imprecise. Chunk too small and you lose the surrounding context that gives a sentence its meaning.
+
+A common starting point is a **fixed-size chunking** strategy: split documents into chunks of roughly 300–500 tokens with a 50-token overlap between consecutive chunks. The overlap ensures that ideas straddling a chunk boundary aren't lost. More sophisticated approaches include **semantic chunking** (splitting at natural paragraph or sentence boundaries), **recursive character splitting** (hierarchically trying different separators like `\n\n`, `\n`, `.`), and **document-aware chunking** (respecting structure like markdown headers or code blocks). The right strategy depends heavily on your source data — for dense technical documentation, smaller chunks with overlap work well; for narrative text, paragraph-level chunking often preserves meaning better. Experimenting with chunk size and measuring retrieval quality with a small evaluation set is the most reliable way to find the sweet spot.
