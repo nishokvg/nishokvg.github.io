@@ -1,80 +1,92 @@
 import type { Metadata } from "next";
+import { Inter, Playfair_Display, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import ThemeToggle from "@/components/ThemeToggle";
 
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  display: "swap",
+});
+
+const playfair = Playfair_Display({
+  subsets: ["latin"],
+  variable: "--font-serif",
+  style: ["normal", "italic"],
+  display: "swap",
+});
+
+const jetbrains = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: {
-    default: "Nishok's Rumination",
-    template: "%s | Nishok's Rumination",
+    default: "Kural & Cloud",
+    template: "%s | Kural & Cloud",
   },
   description:
-    "Nishok's personal blog — AI/ML learnings, random thoughts, and a desi perspective on tech and life.",
-  keywords: ["AI", "ML", "machine learning", "personal blog", "Nishok", "LLM", "life"],
+    "Ancient wisdom. Modern infrastructure. One life, many threads. — Nishok Vishnu Ganesan's personal blog on SRE, AI/ML, Tamil literature, and life.",
+  keywords: ["SRE", "AI", "ML", "Kubernetes", "Tamil", "Thirukkural", "cloud", "blog", "Nishok"],
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${inter.variable} ${playfair.variable} ${jetbrains.variable}`}
+    >
       <head>
-        {/* Prevent flash of wrong theme */}
+        {/* Prevent flash — default to dark */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){var s=localStorage.getItem('theme');var d=window.matchMedia('(prefers-color-scheme: dark)').matches;if(s==='dark'||(s===null&&d)){document.documentElement.classList.add('dark')}})()`,
+            __html: `(function(){
+              var s = localStorage.getItem('theme');
+              var d = window.matchMedia('(prefers-color-scheme: dark)').matches;
+              var dark = s ? s === 'dark' : d !== false;
+              if (!dark) document.documentElement.classList.add('light');
+            })()`,
           }}
         />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
-          rel="stylesheet"
-        />
       </head>
-      <body className="min-h-screen bg-bg-primary text-text-primary antialiased transition-colors duration-200">
-        {/* Nav */}
-        <nav className="sticky top-0 z-50 border-b border-border bg-bg-primary/90 backdrop-blur-sm">
-          <div className="mx-auto max-w-6xl px-4 sm:px-6">
-            <div className="flex h-14 items-center justify-between">
-              <a
-                href="/"
-                className="font-semibold text-text-primary hover:text-accent transition-colors text-sm sm:text-base"
-              >
-                <span className="text-accent font-mono">&gt;_</span>{" "}
-                Nishok&apos;s Rumination
-              </a>
-              <div className="flex items-center gap-4">
-                <a
-                  href="/"
-                  className="text-sm text-text-secondary hover:text-accent transition-colors"
-                >
-                  Home
-                </a>
-                <a
-                  href="/about"
-                  className="text-sm text-text-secondary hover:text-accent transition-colors"
-                >
-                  About
-                </a>
-                <ThemeToggle />
-              </div>
+      <body className="min-h-screen antialiased transition-colors duration-200"
+            style={{ backgroundColor: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "var(--font-sans)" }}>
+
+        {/* Navbar */}
+        <nav style={{ backgroundColor: "color-mix(in srgb, var(--bg-surface) 90%, transparent)", borderBottom: "1px solid var(--bg-border)" }}
+             className="sticky top-0 z-50 backdrop-blur-sm">
+          <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
+            <a href="/" className="flex items-center gap-1 no-underline">
+              <span className="font-mono text-sm" style={{ color: "var(--accent-indigo)" }}>&gt;_</span>
+              <span className="font-serif text-lg font-semibold" style={{ color: "var(--text-primary)" }}> Kural</span>
+              <span className="font-mono text-lg" style={{ color: "var(--accent-indigo)" }}> &amp; Cloud</span>
+            </a>
+            <div className="flex items-center gap-6">
+              <a href="/" className="text-sm transition-colors hover:text-[var(--accent-indigo)]"
+                 style={{ color: "var(--text-secondary)" }}>Home</a>
+              <a href="/about" className="text-sm transition-colors hover:text-[var(--accent-indigo)]"
+                 style={{ color: "var(--text-secondary)" }}>About</a>
+              <ThemeToggle />
             </div>
           </div>
         </nav>
 
-        {/* Main content */}
+        {/* Main */}
         <main className="mx-auto max-w-6xl px-4 sm:px-6 py-8">
           {children}
         </main>
 
         {/* Footer */}
-        <footer className="border-t border-border mt-16">
-          <div className="mx-auto max-w-6xl px-4 sm:px-6 py-6">
-            <p className="text-center text-xs text-text-muted font-mono">
+        <footer style={{ borderTop: "1px solid var(--bg-border)" }} className="mt-16">
+          <div className="mx-auto max-w-6xl px-6 py-6">
+            <p className="text-center font-mono text-xs" style={{ color: "var(--text-muted)" }}>
               Built with Next.js · Deployed on GitHub Pages ·{" "}
-              <span className="text-accent">Nishok&apos;s Rumination</span>
+              <span style={{ color: "var(--accent-indigo)" }}>Kural &amp; Cloud</span>
             </p>
           </div>
         </footer>

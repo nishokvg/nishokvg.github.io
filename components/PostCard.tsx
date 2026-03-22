@@ -1,88 +1,56 @@
-import React from "react";
-import { PostMeta, formatDate, formatShortDate } from "@/lib/posts";
+import { PostMeta } from "@/lib/posts";
+import TagPill from "./TagPill";
 
-interface PostCardProps {
-  post: PostMeta;
-}
-
-const TAG_COLORS: Record<string, string> = {
-  RAG: "bg-purple-900/50 text-purple-300 border-purple-700/50",
-  FAISS: "bg-blue-900/50 text-blue-300 border-blue-700/50",
-  embeddings: "bg-green-900/50 text-green-300 border-green-700/50",
-  LLM: "bg-orange-900/50 text-orange-300 border-orange-700/50",
-  "machine learning": "bg-yellow-900/50 text-yellow-300 border-yellow-700/50",
-  "deep learning": "bg-red-900/50 text-red-300 border-red-700/50",
-  pytorch: "bg-orange-900/50 text-orange-300 border-orange-700/50",
-  python: "bg-blue-900/50 text-blue-300 border-blue-700/50",
-  transformers: "bg-pink-900/50 text-pink-300 border-pink-700/50",
-  "neural networks": "bg-cyan-900/50 text-cyan-300 border-cyan-700/50",
-};
-
-const DEFAULT_TAG_COLOR =
-  "bg-accent/10 text-accent border-accent/30";
-
-function TagBadge({ tag }: { tag: string }) {
-  const colorClass = TAG_COLORS[tag] ?? DEFAULT_TAG_COLOR;
-  return (
-    <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${colorClass}`}
-    >
-      {tag}
-    </span>
-  );
-}
-
-export { TagBadge };
-
-export default function PostCard({ post }: PostCardProps) {
+export default function PostCard({ post }: { post: PostMeta }) {
   return (
     <a
       href={`/posts/${post.slug}`}
-      className="group block rounded-xl border border-border bg-bg-secondary hover:border-accent/50 hover:bg-bg-tertiary transition-all duration-200 p-5"
+      className="group block rounded-xl border p-5 transition-all
+        border-[var(--bg-border)] bg-[var(--bg-surface)]
+        hover:border-[rgba(129,140,248,0.4)] hover:bg-[var(--bg-elevated)]"
     >
       <div className="flex items-start justify-between gap-4">
-        {/* Left: content */}
         <div className="flex-1 min-w-0 space-y-2">
-          {/* Title row */}
-          <div className="flex items-start gap-2">
-            <span className="text-text-muted font-mono text-sm mt-0.5 flex-shrink-0 group-hover:text-accent transition-colors">
-              &gt;
-            </span>
-            <h3 className="text-base font-semibold text-text-primary group-hover:text-accent transition-colors leading-snug">
-              {post.title}
-            </h3>
-          </div>
+          <h3 className="font-serif text-base font-semibold leading-snug
+                         text-[var(--text-primary)] group-hover:text-[var(--accent-indigo)] transition-colors">
+            <span className="font-mono mr-1.5 text-[var(--accent-indigo)]">&gt;</span>
+            {post.title}
+          </h3>
 
-          {/* Excerpt */}
           {post.excerpt && (
-            <p className="text-sm text-text-secondary leading-relaxed line-clamp-2 pl-5">
+            <p className="text-sm leading-relaxed line-clamp-2 pl-5 text-[var(--text-secondary)]">
               {post.excerpt}
             </p>
           )}
 
-          {/* Tags */}
           {post.tags.length > 0 && (
             <div className="flex flex-wrap gap-1.5 pl-5">
-              {post.tags.map((tag) => (
-                <TagBadge key={tag} tag={tag} />
-              ))}
+              {post.tags.map((tag) => <TagPill key={tag} tag={tag} />)}
             </div>
           )}
         </div>
 
-        {/* Right: meta */}
-        <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-          <span className="text-xs text-text-muted font-mono whitespace-nowrap">
+        <div className="flex-shrink-0 flex flex-col items-end gap-1">
+          <span className="font-mono text-xs text-[var(--text-muted)]">
             {formatShortDate(post.date)}
           </span>
-          <span className="text-xs text-text-muted whitespace-nowrap">
+          <span className="font-mono text-xs text-[var(--text-muted)]">
             {post.readingTime}
           </span>
-          <span className="text-accent opacity-0 group-hover:opacity-100 transition-opacity text-sm mt-1">
+          <span className="mt-1 text-sm text-[var(--accent-indigo)] opacity-0 group-hover:opacity-100 transition-opacity">
             →
           </span>
         </div>
       </div>
     </a>
   );
+}
+
+function formatShortDate(dateStr: string): string {
+  try {
+    const d = new Date(dateStr + "T00:00:00");
+    return d.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit" });
+  } catch {
+    return dateStr;
+  }
 }

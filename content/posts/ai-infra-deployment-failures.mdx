@@ -1,8 +1,10 @@
 ---
 title: "We Let AI Write Our Infrastructure Code — And It Killed Our Deployment Failures"
 date: "2026-03-16"
-tags: ["DevOps", "SRE", "Terraform", "Terragrunt", "AWS", "EKS", "Kubernetes", "ClaudeCode", "InfrastructureAsCode", "PlatformEngineering"]
+tags: ["SRE", "Terraform", "Terragrunt", "AWS", "EKS", "Kubernetes", "ClaudeCode", "InfrastructureAsCode", "PlatformEngineering"]
 excerpt: "A war story about circular dependencies, zombie ENIs, and how Claude Code + a two-tier EKS refactor took us from 60% to 98% first-try deployments."
+category: "sre"
+published: true
 ---
 
 It was a Tuesday at 2:00 AM. I typed `terragrunt apply` to deploy a MicroStrategy Customer Managed Cloud environment — EKS cluster, Istio service mesh, OIDC integrations, the works. The control plane spun up. The nodes attached. And then... silence.
