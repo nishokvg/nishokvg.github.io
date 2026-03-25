@@ -1,0 +1,178 @@
+---
+title: "Building an HR Chatbot with RAG — From PDF to Answers in 3 Steps"
+date: "2026-03-24"
+tags: ["RAG", "FAISS", "embeddings", "LLM", "Python", "OpenRouter"]
+excerpt: "A practical walkthrough of building a production-style HR Q&A bot: ingest PDFs, chunk and embed them, search with FAISS, and generate cited answers with GPT-4o-mini."
+category: "ai"
+published: true
+---
+
+After Day-10's class on RAG theory, I wanted to build something that actually feels like a real product — not just a four-document toy. The result is a three-file HR chatbot that can answer questions like "How many sick days do I get?" or "What's the 401k match?" directly from a PDF handbook, with page-level citations.
+
+Here's how it works and what I learned building it.
+
+---
+
+## The Problem RAG Solves
+
+An LLM trained up to mid-2024 knows nothing about *your company's* HR policies. You could fine-tune it, but that's expensive and you'd have to retrain every time the handbook changes. RAG is the cheaper, more flexible answer: keep the LLM frozen, and at query time, *retrieve* the relevant policy text and hand it to the model as context.
+
+```
+User question
+  → embed question → search vector index → retrieve top chunks
+  → stuff chunks into prompt → LLM generates answer with citations
+```
+
+The LLM never needs to memorize your documents. It just needs to read and reason.
+
+---
+
+## Project Structure
+
+```
+rag-learning/
+├── docs/
+│   └── hr_employee_handbook.pdf
+├── index/
+│   ├── faiss.index       ← vector index (built by ingest.py)
+│   ├── chunks.json       ← chunk text + metadata
+│   └── ingest_log.json   ← stats about the last run
+├── generate_hr_pdf.py    ← Step 0: creates the HR PDF
+├── ingest.py             ← Step 1: offline indexing pipeline
+└── query.py              ← Step 2: interactive chatbot
+```
+
+The split between `ingest.py` and `query.py` is deliberate. Indexing is slow and expensive (it calls the embedding API). You run it once when documents change. Querying is fast — it just loads the saved FAISS index from disk.
+
+---
+
+## Step 1 — Chunking
+
+The first challenge with any RAG system is chunking: splitting a long document into pieces small enough to embed meaningfully, but large enough to preserve context.
+
+I went with **fixed-size word-based chunks with overlap**:
+
+```python
+CHUNK_WORDS   = 80   # each chunk is ~80 words
+OVERLAP_WORDS = 15   # consecutive chunks share 15 words
+```
+
+Why overlap? Because important information often straddles a chunk boundary. A sentence about "12 sick days per year" might start at the end of one chunk and finish at the start of the next. Overlap ensures neither chunk loses that fact entirely.
+
+For the 9-page HR handbook, this produced **32 chunks** — each small enough to embed a focused idea, each carrying metadata:
+
+```python
+{
+  "text":   "Employees accrue 1.5 days of PTO per month...",
+  "source": "hr_employee_handbook.pdf",
+  "page":   3,
+  "start":  120,
+  "end":    200
+}
+```
+
+That `source` and `page` metadata is what powers citations in the final answer.
+
+---
+
+## Step 2 — Embedding and Indexing
+
+Each chunk's text gets converted to a 1536-dimensional float vector using OpenAI's `text-embedding-3-small` model (via OpenRouter). These vectors capture semantic meaning — chunks about "vacation days" and "annual leave" end up geometrically close in the vector space, even though they don't share keywords.
+
+```python
+embeddings = embed_batched(chunk_texts, batch_size=50)
+# shape: (32, 1536)
+```
+
+Those vectors go into a **FAISS L2 index**:
+
+```python
+index = faiss.IndexFlatL2(1536)
+index.add(embeddings)
+faiss.write_index(index, "index/faiss.index")
+```
+
+`IndexFlatL2` is an exact (brute-force) search — fine for 32 chunks. For millions of vectors you'd switch to `IndexIVFFlat` or `IndexHNSWFlat` for approximate search. The interface stays the same; only the index type changes.
+
+---
+
+## Step 3 — Query and Generate
+
+At query time, the question gets embedded with the same model, and FAISS finds the 4 nearest chunks by L2 distance:
+
+```python
+q_emb = get_query_embedding("How many sick days do I get?")
+distances, indices = index.search(q_emb, k=4)
+```
+
+Those chunks get formatted into a context block and injected into the LLM prompt:
+
+```
+[Source: hr_employee_handbook.pdf | Page 4 | Rank 1]
+Full-time employees receive 10 sick days per calendar year...
+
+[Source: hr_employee_handbook.pdf | Page 4 | Rank 2]
+Sick days do not carry over to the following calendar year...
+```
+
+The system prompt keeps the model honest:
+
+> *Answer only from the provided context. If the answer is not in the context, say you don't know.*
+
+This is the key guardrail against hallucination. The LLM is told it cannot use outside knowledge — it can only reason over what you've handed it.
+
+---
+
+## What I Learned
+
+**Chunk size matters more than model choice.** I initially had chunks at 120 words. Retrieval was imprecise — the top chunk would contain the answer buried among other content, and the LLM would sometimes miss it. Dropping to 80 words made a noticeable difference.
+
+**Metadata is underrated.** Most RAG tutorials embed text and forget everything else. Storing `source` and `page` with each chunk lets you show the user exactly where the answer came from. That's the difference between "trust me" and "see page 4."
+
+**The split between ingest and query is essential.** The embedding API costs money and takes time. If you mix it into the query path, every question re-embeds all your documents. Separating them means ingest runs once; queries are just a vector lookup + LLM call.
+
+**L2 vs cosine similarity.** FAISS `IndexFlatL2` uses Euclidean distance. For normalized vectors (which embedding APIs usually return), L2 and cosine similarity produce the same ranking. If you're unsure, normalize your vectors before adding them to the index.
+
+---
+
+## Running It
+
+```bash
+# Install
+pip3 install reportlab pypdf requests numpy scikit-learn faiss-cpu
+
+# Set API key
+export OPENROUTER_API_KEY="your-key-here"
+
+# Build the PDF (once)
+python3 generate_hr_pdf.py
+
+# Index documents (once, or when docs change)
+python3 ingest.py
+
+# Chat
+python3 query.py
+```
+
+Sample session:
+
+```
+You: How many sick days do I get per year?
+HR Assistant: Full-time employees receive 10 sick days per calendar year.
+  [Based on: hr_employee_handbook.pdf — p.4]
+
+You: sources
+  [1] hr_employee_handbook.pdf — page 4
+      "Full-time employees receive 10 sick days per calendar year..."
+```
+
+---
+
+## What's Next
+
+- **Multiple PDFs**: drop more files into `docs/` and re-run `ingest.py`. The index grows automatically.
+- **Smarter chunking**: split on paragraph boundaries instead of word counts to preserve more semantic units.
+- **Reranking**: retrieve top-10 with FAISS, then use a cross-encoder to rerank to top-4 before passing to the LLM.
+- **Persistent chat history**: right now each question is stateless. Adding conversation memory would let users ask follow-ups naturally.
+
+The full code is in [ai-learning/rag-learning](https://github.com/nishokvg/ai-learning/tree/main/rag-learning).
