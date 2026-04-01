@@ -1,0 +1,225 @@
+---
+title: "RAG on a 2177-Page Tamil Epic — What I Learned Building a Villi Bharatam Chatbot"
+date: "2026-03-31"
+tags: ["RAG", "FAISS", "embeddings", "LLM", "Python", "OpenRouter", "Tamil"]
+excerpt: "What happens when you try to build a RAG chatbot on a 2177-page Tamil literary classic with a 1990s font encoding? A lot goes wrong — and a lot gets learned."
+category: "ai"
+published: true
+---
+
+I've been learning RAG by building things. First it was an HR chatbot on a 9-page PDF. Then a Tamil HR handbook with hybrid retrieval. Both worked cleanly.
+
+This time I wanted to go bigger — and harder. The subject: வில்லி பாரதம் (*Villi Bharatam*), a 15th-century Tamil retelling of the Mahabharata by the poet Villiputhur Alwar. 8 volumes. 2177 pages. A text that scholars spend lifetimes studying.
+
+The goal: ask it questions in Tamil and get grounded answers.
+
+Here is everything that went wrong, how I fixed it, and what the results looked like.
+
+---
+
+## The Corpus
+
+Villi Bharatam is split into 8 *parvas* (books):
+
+| # | Parva | Pages |
+|---|-------|-------|
+| 1 | ஆதி பருவம் (Adi) | 577 |
+| 2 | சபா பருவம் (Sabha) | 288 |
+| 3 | ஆரணிய பருவம் (Aranya) | 292 |
+| 4 | விராட பருவம் (Virata) | 161 |
+| 5 | உத்தியோக பருவம் (Udyoga) | 243 |
+| 6 | வீட்டும பருவம் (Bhishma) | 194 |
+| 8 | கன்ன பருவம் (Karna) | 160 |
+| 9 | சல்லிய-சௌப்திக பருவம் (Shalya) | 262 |
+
+Each PDF has two kinds of content interleaved: **poem verses** (Villi's original Tamil poetry) and **prose commentary** (explanations in modern Tamil prose). Separating them would be important for retrieval quality.
+
+The plan looked straightforward: extract text → chunk → embed → query. It was not straightforward.
+
+---
+
+## Problem 1: The Font Encoding Trap
+
+The first obstacle hit immediately. When I ran `pypdf` or `pymupdf` on these PDFs, the extracted text looked like this:
+
+```
+¬è Å¨Ä¿¨ÁÂ¢Ä Å¢üÅ¢¨Ä¡ö
+Á¡üÈ¢Å¢¼÷ ÀÉ¢¡Ä¡ö
+```
+
+Garbage. Not Tamil Unicode — raw bytes that meant nothing.
+
+The cause: these PDFs use **Bamini**, a 1990s Tamil font encoding. Before Unicode was adopted for Indian languages, each Tamil font vendor invented their own glyph-to-character mapping. Bamini's mapping is completely incompatible with Unicode's Tamil block. The PDF extraction libraries dutifully extract the glyph codes — but those codes don't map to the Tamil characters you'd expect.
+
+This is a surprisingly common problem with digitised South Indian texts. Older archives, temple records, and literary editions from the 90s and early 2000s are all Bamini-encoded. There is no automatic converter that works reliably.
+
+Three possible solutions:
+
+| Option | Quality | Speed | Notes |
+|--------|---------|-------|-------|
+| Bamini-to-Unicode mapping table | High | Fast | Mapping tables exist but are incomplete — many glyphs are ambiguous |
+| Tesseract OCR (image → Unicode) | High | Slow (~38 pages/min) | Ignores font entirely, reads pixels |
+| PyMuPDF span color metadata | High | Very fast (~2000 pages in seconds) | Doesn't decode text — but separates content by type |
+
+I went with **both** OCR and color extraction, for different purposes.
+
+---
+
+## Problem 2: The Book Has Two Voices, Printed in Two Colors
+
+When I looked at an actual page from Villi Bharatam, something clicked.
+
+The poem verses are printed in **dark red or teal ink**. The prose commentary is printed in **black**. Section headers use **blue**.
+
+```
+[blue]  பிரிவு 4 — குரு க்ஷேத்திர யுத்தம்
+[teal]  யுத்தம் செய்யவும் வேண்டும் என்று
+[teal]  அர்ஜுனன் மனம் மாறினான்
+[black] அர்ஜுனனுக்கு கிருஷ்ணன் கீதையை உபதேசித்தார்.
+[black] இந்த பிரிவில் அர்ஜுனனின் மனோ நிலையை...
+```
+
+PyMuPDF's `get_text("dict")` exposes a `color` field for every text span as a 24-bit integer. A simple RGB decomposition classifies the content without needing to decode any characters:
+
+```python
+def classify_color(color_int):
+    r = (color_int >> 16) & 0xFF
+    g = (color_int >> 8)  & 0xFF
+    b = (color_int)       & 0xFF
+    brightness = r + g + b
+
+    if brightness < 60:
+        return "commentary"   # black / near-black
+
+    if b > r + 40 and b > g + 20:
+        return "header"       # blue-dominant
+
+    return "verse"            # any real color = Villi's poem
+```
+
+This ran across all 2177 pages in under 30 seconds. The output: structured JSON with every text block tagged as `verse`, `commentary`, or `header` — accurate enough to index separately or together.
+
+---
+
+## The Pipeline Architecture
+
+Once text extraction was solved, the full pipeline looked like this:
+
+```
+PDFs (8 parvas, 2177 pages)
+        │
+        ▼
+extract_by_color.py
+  ├── docs-structured/<parva>.json   (type-tagged blocks)
+  ├── docs-verses/<parva>.txt        (poem lines only)
+  └── docs-commentary/<parva>.txt    (prose only)
+        │
+        ▼
+ingest.py
+  ├── chunk into 80-word overlapping windows (overlap=15)
+  ├── embed with text-embedding-3-small (OpenRouter)
+  │     or nomic-embed-text (Ollama local)
+  ├── FAISS index (1536-dim L2)
+  └── BM25 index (keyword)
+        │
+        ▼
+query.py
+  ├── embed query
+  ├── FAISS top-K (semantic)
+  ├── BM25 top-K (keyword)
+  ├── Reciprocal Rank Fusion (RRF) merge
+  └── GPT-4o-mini / llama3.1:8b → answer
+```
+
+---
+
+## Hybrid Retrieval: Why BM25 Alongside FAISS?
+
+Pure vector search has a weakness with proper nouns. When you ask *"கர்ணன் யார்?"* (Who is Karna?), the embedding of "கர்ணன்" might not cluster closely with chunks that mention "கர்ணன்" if those chunks are about different aspects of the same character. Character names, place names, and section codes are essentially lookup terms — BM25 (term-frequency ranking) handles these exactly.
+
+**Reciprocal Rank Fusion** merges both ranked lists without requiring score normalisation:
+
+```python
+def rrf_merge(semantic_hits, keyword_hits, k=60):
+    scores = {}
+    for rank, idx in enumerate(semantic_hits):
+        scores[idx] = scores.get(idx, 0) + 1 / (rank + k)
+    for rank, idx in enumerate(keyword_hits):
+        scores[idx] = scores.get(idx, 0) + 1 / (rank + k)
+    return sorted(scores, key=scores.get, reverse=True)
+```
+
+In practice, this improved retrieval noticeably for character-specific questions. Semantic search found thematically related passages; BM25 ensured the character's name actually appeared in the retrieved chunks.
+
+---
+
+## The Embedding Timeout Problem
+
+OpenRouter's embedding API timed out — repeatedly. The first attempt used `batch_size=100` and `timeout=60`. Batch 21 of 57 would die every time.
+
+Tamil Unicode text is token-heavy. Each Tamil character is 3 bytes in UTF-8, and a single word like "குரு க்ஷேத்திர" becomes 15-20 tokens instead of 2-3. A batch of 100 Tamil chunks can be 10x the token count of 100 English chunks.
+
+Fix: `batch_size=5`, `timeout=180`, with retry logic and exponential backoff:
+
+```python
+for attempt in range(3):
+    try:
+        resp = requests.post(..., timeout=180)
+        break
+    except ReadTimeout:
+        if attempt == 2:
+            raise
+        time.sleep((attempt + 1) * 5)
+```
+
+1127 chunks embedded in ~9 minutes. Not fast, but it finished.
+
+---
+
+## Accuracy Results
+
+I tested with 10 questions spanning all 8 parvas. Questions ranged from character identity (*"திரௌபதி யார்?"*) to plot events (*"சூதாட்டத்தில் என்ன நடந்தது?"*) to relationships (*"கிருஷ்ணனுக்கும் அர்ஜுனனுக்கும் என்ன தொடர்பு?"*).
+
+| Backend | Model | Accuracy (my estimate) | Notes |
+|---------|-------|----------------------|-------|
+| Ollama local | llama3.1:8b | ~20% | Hallucinated even with strict prompt; ignored "not in context" instruction |
+| OpenRouter | GPT-4o-mini | ~40–50% | Followed instructions; correctly said "not in provided pages" when answer wasn't retrieved |
+
+The accuracy gap between local and cloud is real, but the bigger factor was **retrieval coverage**. We only indexed 30 pages per parva (sample mode) — out of 577, 288, 292 pages etc. Most questions touched pages we hadn't indexed. The LLM couldn't answer what we never retrieved.
+
+GPT-4o-mini's advantage was behavioural: it respected the system prompt, didn't hallucinate, and gave useful "I don't find this in the provided passages" responses instead of making things up.
+
+---
+
+## What I Learned
+
+**Font encoding is a first-class problem in non-English RAG.** English RAG tutorials assume text extraction is free. For South Indian texts — Tamil, Telugu, Kannada — PDFs from before 2005 are often Bamini or ISCII encoded. Budget time for this problem before anything else.
+
+**Color metadata is surprisingly useful.** The span color trick recovered structure that would have cost weeks of OCR effort. If the PDFs you're working with were typeset with semantic color (different inks for different content types), PyMuPDF's span-level metadata is the fastest way to extract that structure.
+
+**Retrieval coverage beats model quality.** GPT-4o-mini gave better answers than llama3.1:8b — but the right answers were still limited by which pages we'd indexed. A smaller, faster model with full coverage (all 2177 pages indexed) would likely beat a bigger model with only 240 pages (30×8). Index everything before tuning models.
+
+**Tamil text is token-expensive.** Budget 5–10x more tokens (and more time) than you'd expect for equivalent English text. Design your batching accordingly.
+
+**Strict system prompts matter.** The single biggest improvement to answer quality was making the system prompt explicitly English and unambiguous:
+
+```
+You are a Tamil literature assistant. Use ONLY information from the provided passages.
+If the answer is not in the passages, say: "இந்த தகவல் கொடுக்கப்பட்ட பக்கங்களில் இல்லை."
+Do not use outside knowledge. Do not guess.
+```
+
+Local models ignored this. GPT-4o-mini obeyed it completely.
+
+---
+
+## What's Next
+
+The sample index covers 30 pages per parva — ~14% of the corpus. The path to 80%+ accuracy is straightforward:
+
+1. **Run OCR on all 2177 pages.** At 38 pages/min, ~57 minutes of compute. The OCR pipeline (`ocr_extract.py`) already handles resume and batching.
+2. **Re-index with full coverage.** Rebuild the FAISS + BM25 index on all pages.
+3. **Add parva-level filtering.** Questions about the dice game belong in Sabha Parva; questions about Karna's death belong in Karna Parva. Routing by parva before retrieval reduces noise.
+4. **Experiment with reranking.** After RRF retrieval, pass top-10 chunks through a cross-encoder to rerank to top-3 before sending to the LLM.
+
+The full code is in [ai-learning/rag-learning/tamil-rag/bharatham-rag](https://github.com/nishokvg/ai-learning/tree/main/rag-learning/tamil-rag/bharatham-rag).
