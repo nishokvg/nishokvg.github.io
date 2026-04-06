@@ -1,0 +1,405 @@
+---
+title: "Building RAG on a 2177-Page Tamil Epic — Every Mistake, Every Fix"
+date: "2026-04-05"
+tags: ["RAG", "FAISS", "embeddings", "LLM", "Python", "OpenRouter", "Tamil", "Pydantic"]
+excerpt: "A complete technical walkthrough of building production RAG on Villi Bharatam — from garbled Bamini font encoding to hybrid retrieval, Pydantic AI structured outputs, and a 10,370-chunk Chroma index."
+category: "ai"
+published: true
+---
+
+I typed the simplest possible question: *"கர்ணன் யார்?"* — Who is Karna?
+
+The system I'd spent three days building returned this:
+
+```
+¬è Å¨Ä¿¨ÁÂ¢Ä Å¢üÅ¢¨Ä¡ö
+Á¡üÈ¢Å¢¼÷ ÀÉ¢¡Ä¡ö
+```
+
+That's not Tamil. That's raw bytes from a 1990s font encoding that every PDF library in existence gets wrong. I had just embedded 1,602 chunks of it into FAISS.
+
+What followed was three weeks of building, breaking, and rebuilding a RAG system on **வில்லி பாரதம்** (*Villi Bharatam*) — a 15th-century Tamil retelling of the Mahabharata by Villiputhur Alwar. 8 parvas (books). 2,177 pages. Two backends (local Ollama and OpenRouter). Two vector stores (FAISS then Chroma). One Pydantic AI agent with quote-grounded citation validation.
+
+This is the full story.
+
+---
+
+## The Corpus
+
+| # | Parva | Pages |
+|---|-------|-------|
+| 1 | ஆதி பருவம் — Origins | 577 |
+| 2 | சபா பருவம் — The Court | 288 |
+| 3 | ஆரணிய பருவம் — Forest | 292 |
+| 4 | விராட பருவம் — Virata | 161 |
+| 5 | உத்தியோக பருவம் — Preparations | 243 |
+| 6 | வீட்டும பருவம் — Bhishma | 194 |
+| 8 | கன்ன பருவம் — Karna | 160 |
+| 9 | சல்லிய-சௌப்திக பருவம் — Epilogue | 262 |
+| **Total** | | **2,177 pages** |
+
+The goal: ask it anything — who is Karna, what happened at the dice game, what did Krishna teach Arjuna before the war — and get grounded, cited answers from the actual Tamil text.
+
+---
+
+## Phase 1 — Learning RAG (The Simple Version)
+
+Before touching Tamil, I built two learning-grade RAG systems to understand the fundamentals:
+
+**Local RAG** — Ollama + `nomic-embed-text` + FAISS on an English HR handbook.
+**Tamil RAG** — Same architecture extended to a Tamil HR document.
+
+What I learned in this phase:
+
+```
+User question
+  → embed with nomic-embed-text (768-dim)
+  → FAISS L2 search → top-K chunks
+  → llama3.1:8b generates answer
+```
+
+It worked for English. It worked passably for simple Tamil. But character names — *கர்ணன்*, *அர்ஜுனன்*, *துரியோதனன்* — are exact tokens, not semantic concepts. A question about Karna retrieves chunks about warriors in general. Semantic search alone isn't enough.
+
+---
+
+## Hybrid Retrieval: FAISS + BM25 + RRF
+
+The fix is **hybrid retrieval** — combining dense vector search with sparse keyword search.
+
+**BM25** (Best Match 25) is a term-frequency ranking algorithm. It doesn't understand meaning, but it finds exact tokens. If "கர்ணன்" appears in a chunk, BM25 ranks that chunk first. No embedding required.
+
+**FAISS** finds semantically similar chunks even when exact words don't match.
+
+**Reciprocal Rank Fusion** merges both ranked lists into one:
+
+```python
+def rrf_merge(semantic_hits, keyword_hits, k=60):
+    scores = {}
+    for rank, idx in enumerate(semantic_hits):
+        scores[idx] = scores.get(idx, 0) + 1 / (rank + k)
+    for rank, idx in enumerate(keyword_hits):
+        scores[idx] = scores.get(idx, 0) + 1 / (rank + k)
+    return sorted(scores, key=scores.get, reverse=True)
+```
+
+A chunk that appears in both ranked lists gets a score bonus from both. In practice: character name questions improved significantly. The chunk containing *கர்ணன்* as a word AND semantically related to "warrior/hero" floats to the top.
+
+---
+
+## The Font Encoding Trap
+
+When I moved to the actual Villi Bharatam PDFs, everything broke. These are digitised scans from the 1990s, typeset in **Bamini** — a pre-Unicode Tamil font encoding.
+
+Bamini maps Tamil glyphs to the ASCII range. The letter **க** is stored as byte `0x47` — which is `G` in ASCII. `pypdf` and `pymupdf` both extract what they see: ASCII bytes. The result looks like:
+
+```
+# Bamini-encoded PDF, extracted by pymupdf:
+¬è Å¨Ä¿¨ÁÂ¢Ä Å¢üÅ¢¨Ä¡ö
+
+# What it should be:
+அர்ஜுனன் வில்லேந்தி நின்றான்
+```
+
+I tried Bamini-to-Unicode mapping tables. They exist. They're incomplete. One character — the vowel carrier ர — doubles as a vowel modifier in Bamini. Context-free mapping accuracy: ~70%. In an 80-word chunk, that's 24 wrong characters. Embeddings trained on correct Unicode Tamil, given Bamini garbage as input, produce meaningless vectors.
+
+**Three approaches that actually work:**
+
+| Method | How | Quality | Speed |
+|--------|-----|---------|-------|
+| Bamini-Unicode mapping | Lookup table | ~70% | Fast |
+| **Tesseract OCR** | Reads page as image, ignores font | High | 38 pages/min |
+| **Color metadata** | PyMuPDF span RGB values | High | 2,177 pages in 28s |
+
+---
+
+## The Color Extraction Insight
+
+Villi Bharatam is typeset with semantic color: poem verses in dark red/teal ink, prose commentary in black, section headers in blue.
+
+PyMuPDF's `get_text("dict")` exposes a `color` field for every text span as a 24-bit integer. Three lines of RGB arithmetic classify content type without decoding a single character:
+
+```python
+def classify_color(color_int):
+    r = (color_int >> 16) & 0xFF
+    g = (color_int >> 8)  & 0xFF
+    b = color_int & 0xFF
+
+    if (r + g + b) < 60:
+        return "commentary"   # black ink → prose explanation
+    if b > r + 40 and b > g + 20:
+        return "header"       # blue → section title
+    return "verse"            # any real color → Villi's poem
+```
+
+Result: all 10,438 blocks across 2,177 pages classified in 28 seconds. Text is still Bamini-garbled, but the structure is perfect — we know exactly which blocks are verses and which are commentary.
+
+For chunk **content** (the actual text), we use Tesseract OCR. For chunk **structure** (verse vs commentary), we use color metadata. Combined: correct Unicode Tamil text with semantic type information.
+
+---
+
+## OCR at Scale: The Speed Problem
+
+First attempt at OCR: load the entire PDF at once.
+
+```python
+# Wrong — loads all 577 pages into RAM
+images = convert_from_path(pdf_path, dpi=200)
+```
+
+Speed: **0.6 pages/min**. At that rate, 2,177 pages would take 60 hours.
+
+The problem: 577 high-DPI page images at once → 12GB RAM → constant disk swapping → CPU throttles.
+
+Fix: process in batches of 10, discard images immediately:
+
+```python
+for start in range(0, total_pages, 10):
+    images = convert_from_path(pdf_path, dpi=200,
+                               first_page=start + 1,
+                               last_page=min(start + 10, total_pages))
+    for img in images:
+        text = pytesseract.image_to_string(img, lang="tam+eng", config="--psm 1")
+    del images  # release immediately
+```
+
+Speed: **38 pages/min** — a 63x improvement. All 2,177 pages: ~57 minutes.
+
+---
+
+## Phase 2 — Production RAG
+
+With correct text in hand, the architecture moved from learning-grade to production-grade.
+
+**What changed:**
+
+| Component | Learning version | Production version |
+|-----------|-----------------|-------------------|
+| Chunk size | 80 words (~100 tokens) | ~800 tokens, verse-boundary aware |
+| Overlap | 15 words | 150 tokens |
+| Vector store | FAISS flat file | Chroma persistent DB |
+| Retrieval | FAISS + BM25 + RRF | Chroma + BM25 + RRF |
+| Citations | filename + page | Exact quoted passage, validated |
+| Output | Raw string + regex | Pydantic AI structured schema |
+| Confidence | LLM self-assessed | Derived from RRF score |
+| Cache | None | JSON file by query hash |
+
+### Verse-Boundary Chunking
+
+Standard chunking splits at fixed token counts regardless of content. For Tamil poetry, this cuts verses mid-line:
+
+```
+# Bad — cuts here:
+...குந்தி தேவி சூரியனை நோக்கி | தவம் செய்தாள். சூரியன் அருளால்...
+  ← end of chunk                   ← start of next chunk
+```
+
+The chunker accumulates blocks until ~800 tokens, but always breaks at block edges — never mid-verse:
+
+```python
+for block in expanded_blocks:
+    if current_tokens + block_tokens > CHUNK_TOKENS and current_blocks:
+        chunks.append(flush(current_blocks))
+        # carry last ~150 tokens as overlap
+        current_blocks = get_overlap_blocks(current_blocks)
+    current_blocks.append(block)
+```
+
+Result: 10,370 chunks averaging 691–730 tokens per chunk across all 8 parvas.
+
+### Chroma vs FAISS
+
+FAISS is a flat file on disk. It's perfect for learning — zero infrastructure, loads in milliseconds. For production, two things break:
+
+1. **No metadata filtering** — to search only கன்ன பருவம் for a Karna question, you'd have to post-filter the entire corpus
+2. **Manual everything** — separate pickle for chunk metadata, separate JSON for logs, manual ID management
+
+Chroma stores embeddings, text, and metadata together, and filters at query time:
+
+```python
+# Search only Karna Parva
+collection.query(
+    query_embeddings=[q_emb],
+    n_results=10,
+    where={"parva_num": "08"},   # only கன்ன பருவம்
+)
+```
+
+Incremental indexing also comes for free — re-running ingest skips already-indexed chunk IDs.
+
+---
+
+## Pydantic AI: Structured Answers with Quote Validation
+
+The old approach: ask the LLM to format a string correctly, run regex to clean it up, hope it doesn't hallucinate.
+
+The production approach: define a schema, let Pydantic AI enforce it.
+
+```python
+class Evidence(BaseModel):
+    quote:    str   # MUST be exact substring of retrieved chunk
+    parva:    str
+    page:     int
+
+class BharatamAnswer(BaseModel):
+    answer:     str
+    evidence:   list[Evidence]
+    confidence: Literal["high", "medium", "low", "not_found"]
+```
+
+The quote guardrail is the critical piece:
+
+```python
+@agent.output_validator
+async def validate_quotes(ctx, result):
+    retrieved_texts = [c["text"] for c in ctx.deps.chunks]
+    bad_quotes = [
+        ev.quote for ev in result.evidence
+        if not any(ev.quote in chunk for chunk in retrieved_texts)
+    ]
+    if bad_quotes:
+        raise ModelRetry("Quote not found — copy text EXACTLY as it appears")
+    return result
+```
+
+`ModelRetry` tells Pydantic AI to resend with the error message attached. The model self-corrects up to 2 times automatically before the call fails hard. No fabricated citations can pass through.
+
+**Confidence from retrieval score, not LLM opinion:**
+
+LLMs consistently over-report confidence. We derive it from the RRF score of the top retrieved chunk instead:
+
+```python
+def score_to_confidence(top_rrf_score):
+    if top_rrf_score > 0.07:  return "high"
+    if top_rrf_score > 0.03:  return "medium"
+    if top_rrf_score > 0.01:  return "low"
+    return "not_found"        # skip LLM call entirely
+```
+
+---
+
+## Performance Results
+
+After building the full 10,370-chunk index with correct OCR text (benchmark: 3 runs per question, cache disabled):
+
+| Question | p50 | p99 | Confidence |
+|----------|-----|-----|-----------|
+| கர்ணன் யார்? | 7.7s | 9.1s | low |
+| திரௌபதி யார்? | 7.6s | 7.9s | low |
+| பீஷ்மர் யார்? | 10.7s | 72.6s | low |
+
+The p99 spike (72s) is a single OpenRouter timeout. The confidence being uniformly "low" is a calibration bug — the thresholds were set for 1,233 chunks and haven't been recalibrated for 10,370. Retrieval quality is actually good:
+
+```
+Q: சூதாட்டத்தில் என்ன நடந்தது?
+
+Citation: "தானாகவே சூதாடி எல்லாப் பொருள்களையும் இழந்து பின்னர்த்‌
+தருமபுத்திரன்‌ பிராயத்தில்‌ மூத்தவனான தன்னை முதலிலும்‌, பிறகு வயசின்‌
+கிரமப்படியே வீமன்‌ முதலிய தம்பிமாரையும்‌..."
+— சபா பருவம், பக்கம் 239
+```
+
+That's the actual verse from Villi Bharatam about Yudhishthira gambling away his brothers. Correct parva. Correct page. Real text.
+
+---
+
+## Language-Aware Retrieval
+
+Tamil and English are not the same retrieval problem. We used `langdetect` to detect the query language and route accordingly:
+
+```python
+def is_tamil(text: str) -> bool:
+    try:
+        return detect(text) == "ta"
+    except LangDetectException:
+        return False
+```
+
+If the query is Tamil: run both Chroma (semantic) and BM25 (keyword). If the query is English: run Chroma only.
+
+The reason: BM25 does exact token matching. An English query like "Who is Karna?" produces zero keyword matches against Tamil chunks — the word "Karna" doesn't appear, "கர்ணன்" does. Running BM25 on an English query wastes a round trip and pollutes the RRF merge with noise.
+
+This also exposed a deeper problem: `text-embedding-3-small` is English-optimized. It handles Tamil, but Tamil-Tamil semantic similarity scores are compressed — two similar Tamil passages end up further apart in vector space than two equivalent English passages. For production, the right model is `multilingual-e5-large`, specifically trained on cross-lingual tasks including Tamil. We designed for it but haven't switched yet — it's the single highest-impact retrieval improvement remaining.
+
+---
+
+## Reranking: What We Designed But Didn't Build
+
+The retrieval pipeline returns top-K chunks by RRF score. But RRF is a ranking signal, not a relevance signal — it measures whether a chunk appeared in both lists, not whether it actually answers the question.
+
+The production design includes a reranking step:
+
+```
+Retrieve top-10 with Chroma + BM25 + RRF
+        ↓
+Cross-encoder reranker
+  (reads full query + each chunk together)
+        ↓
+Top-3 passed to LLM
+```
+
+A cross-encoder processes the query and chunk as a pair — it's much more accurate than embedding distance alone because it reads both texts in context. The cost: 10 cross-encoder calls per query instead of 1 embedding call. The gain: precision improves significantly for multi-hop questions like "What did Krishna say to Arjuna before the battle?" where thematic similarity alone retrieves off-topic passages.
+
+We didn't build it yet. It's the next step after the confidence threshold recalibration.
+
+---
+
+## What We Evaluated and Rejected
+
+Before committing to Chroma + BM25, we reviewed the full production database stack — GIN indexes, JSONB, pgvector, statement-level triggers. Understanding why we rejected them matters as much as understanding what we chose.
+
+**pgvector** (PostgreSQL extension for vector storage) was the main alternative to Chroma. It would consolidate everything — embeddings, metadata, full-text search — into one database with SQL query power and ACID transactions. The right choice if you're building multi-tenant SaaS where many users query different document sets simultaneously.
+
+For a single-corpus Tamil literary RAG, it's over-engineering. Chroma runs in-process, persists to disk, and supports metadata filtering — everything we need in ~50 lines of setup.
+
+**GIN indexes** are PostgreSQL's inverted indexes for searching inside JSONB arrays. We'd need them if chunk metadata lived in PostgreSQL JSONB columns. Since it lives in Chroma, GIN doesn't apply.
+
+**Statement-level triggers** would rebuild a BM25 cache after bulk inserts. Triggers solve a problem we don't have — ongoing write streams. Our ingest is a one-shot batch job. There's nothing to react to.
+
+The pattern behind the rejection: don't add infrastructure for hypothetical scale. The right amount of complexity is what the actual problem requires.
+
+---
+
+## Don't Optimize Blindly — Test at Realistic Scale
+
+The most important non-technical lesson came from a database article about recipe search. The author ran the same queries at three data sizes — 10K, 100K, 1M recipes — clearing all caches between runs, measuring p50 and p99 at each scale. What felt fast at 10K was a 190ms disaster at 1M.
+
+We did the opposite. Every test at 30 pages/parva (1,233 chunks) looked fine. The chunker bug that produced 1,491-token chunks instead of 800? Invisible at small scale — not enough large blocks to trigger it. The zero-width non-joiner character (`\u200c`) in OCR text causing BM25 to miss `கர்ணன்` queries? Never showed up in sample runs. The confidence threshold miscalibration? Meaningless when all queries returned "low" anyway.
+
+Three bugs that only appeared at 10,370 chunks — full corpus, realistic scale.
+
+The `benchmark.py` we built runs 10 fixed questions × 3 runs, cache disabled, and reports p50/p99:
+
+```bash
+python3 benchmark.py --openrouter --quick
+
+Overall  p50: 7.46s
+Overall  p99: 72.63s   ← this spike is a problem
+```
+
+That p99 spike is a single OpenRouter timeout slipping through the retry logic. At p50 it looks fine. You only see it at realistic scale with multiple runs.
+
+---
+
+## Key Takeaways
+
+**1. Font encoding is a first-class problem in non-English RAG.**
+English RAG tutorials assume text extraction is free. For South Indian texts from before 2005, budget a full day on extraction before touching a single embedding. Bamini, ISCII, TAB — they all require custom handling. There is no universal converter.
+
+**2. Read the physical artefact.**
+The Bamini problem was unsolvable at the byte level. The solution came from looking at a photograph of the actual book and noticing the ink colors. The metadata was there all along — in the physical object, not the file.
+
+**3. Batch size is about token density, not throughput.**
+The standard advice: use the largest batch size that fits in memory. That's English-centric. Tamil Unicode is 3 bytes per character. A batch of 100 Tamil chunks can hit 10x the token count of 100 English chunks. Start at 10% of the recommended batch size for non-Latin scripts.
+
+**4. A model that refuses is better than a model that invents.**
+llama3.1:8b gave confident wrong answers — hallucinated details from pages we hadn't indexed. GPT-4o-mini said "not in provided passages" and moved on. For a literary reference system, honest refusal is more valuable than apparent completeness.
+
+**5. Index coverage beats model quality.**
+Going from llama3.1:8b to GPT-4o-mini on a 14% corpus improved answers on those 14%. Indexing the full 2,177 pages with llama3.1:8b would improve answers everywhere. Fix coverage first, tune models second.
+
+**6. Don't test at toy scale.**
+Every pipeline test at 30 pages/parva looked fine. The chunker bug (single blocks bypassing the token limit check), the zero-width character mismatch in BM25, the confidence threshold miscalibration — none of these appeared until we indexed the full corpus. Test at realistic scale before calling anything production-ready.
+
+---
+
+The full code is in [ai-learning/rag-learning/tamil-rag/prod-bharatham-rag](https://github.com/nishokvg/ai-learning/tree/main/rag-learning/tamil-rag/prod-bharatham-rag).
