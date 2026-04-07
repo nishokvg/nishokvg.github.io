@@ -24,8 +24,8 @@ const jetbrains = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Kural & Cloud",
-    template: "%s | Kural & Cloud",
+    default: "Nishok's Kural & Cloud",
+    template: "%s | Nishok's Kural & Cloud",
   },
   description:
     "Ancient wisdom. Modern infrastructure. One life, many threads. — Nishok Vishnu Ganesan's personal blog on SRE, AI/ML, Tamil literature, and life.",
@@ -63,7 +63,8 @@ export default function RootLayout({
           <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
             <a href="/" className="flex items-center gap-1 no-underline">
               <span className="font-mono text-sm" style={{ color: "var(--accent-indigo)" }}>&gt;_</span>
-              <span className="font-serif text-lg font-semibold" style={{ color: "var(--text-primary)" }}> Kural</span>
+              <span className="font-mono text-sm" style={{ color: "var(--text-muted)" }}>Nishok&apos;s </span>
+              <span className="font-serif text-lg font-semibold" style={{ color: "var(--text-primary)" }}>Kural</span>
               <span className="font-mono text-lg" style={{ color: "var(--accent-indigo)" }}> &amp; Cloud</span>
             </a>
             <div className="flex items-center gap-6">
@@ -86,7 +87,7 @@ export default function RootLayout({
           <div className="mx-auto max-w-6xl px-6 py-6">
             <p className="text-center font-mono text-xs" style={{ color: "var(--text-muted)" }}>
               Built with Next.js · Deployed on GitHub Pages ·{" "}
-              <span style={{ color: "var(--accent-indigo)" }}>Kural &amp; Cloud</span>
+              <span style={{ color: "var(--accent-indigo)" }}>Nishok&apos;s Kural &amp; Cloud</span>
             </p>
           </div>
         </footer>
