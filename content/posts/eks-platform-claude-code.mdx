@@ -1,0 +1,163 @@
+---
+title: "Accelerating Enterprise EKS Deployments with Claude Code"
+date: "2026-04-06"
+tags: ["SRE", "Kubernetes", "EKS", "Terraform", "Terragrunt", "AWS", "ClaudeCode", "PlatformEngineering", "Karpenter"]
+excerpt: "How we built a production-grade MicroStrategy EKS platform from scratch — EKS v1.33, Karpenter, RDS, Istio, and a deeply nested Terragrunt architecture — using Claude Code as an active engineering partner."
+category: "sre"
+published: true
+---
+
+Managing complex, multi-tenant cloud infrastructure for enterprise third-party applications is rarely a walk in the park. We were tasked with building the Infrastructure as Code for a complete MicroStrategy platform stack from scratch on AWS EKS — and doing it fast.
+
+This wasn't a simple deployment. EKS version upgrades to v1.33. Migration to Karpenter for dynamic node provisioning. Data services: RDS and S3. Post-deployment orchestration with Helm and Kubernetes manifests. Everything wrapped in a deeply nested Terragrunt/Terraform architecture spanning hundreds of modules.
+
+Normally, writing and validating this level of IaC takes weeks. This time we integrated Claude Code as an active engineering partner throughout. Here's exactly what that looked like.
+
+---
+
+## The Architecture
+
+The core stack:
+
+```
+AWS EKS v1.33
+  ├── Karpenter          — just-in-time node autoscaling
+  ├── Istio              — service mesh
+  ├── Calico             — network policy
+  ├── Fluent Bit         — log forwarding
+  └── MSTR Operator      — MicroStrategy application layer
+
+Data Services
+  ├── AWS RDS            — database state
+  └── AWS S3             — backup and object storage
+
+IaC
+  ├── Terraform modules  — resource definitions
+  └── Terragrunt         — DRY config, dependency management
+```
+
+The Terragrunt dependency graph alone had seven layers. Every module depends on outputs from the one before it. Any circular dependency causes the entire apply to deadlock.
+
+---
+
+## Problem 1: The Circular Dependency Deadlock
+
+The notorious EKS Terraform trap: the EKS cluster, the OIDC provider, and the essential add-ons form a circular dependency. The `hashicorp/kubernetes` and `helm` providers live in the same module that *creates* the cluster, so Terraform has to guess the API server state during planning.
+
+The consequence: first-run failure is almost guaranteed. The cluster comes up, the nodes attach, and then the Helm charts timeout waiting for resources that depend on OIDC — which depends on the cluster that's still initialising.
+
+We had Claude Code analyse the dependency graph and generate the decoupled module split:
+
+```
+Before (monolithic):
+[VPC] → [EKS + OIDC + Helm + IAM]   ← circular, unpredictable
+
+After (decoupled):
+[VPC] → [EKS Cluster] → [OIDC] → [IAM Roles] → [Helm Charts]
+```
+
+Claude read the existing `.tf` files, identified the coupling points, generated the segmented modules, updated output variables, and reconfigured the `dependency` blocks in `terragrunt.hcl`. What would have been a day of manual refactoring and re-testing took one focused session.
+
+---
+
+## Problem 2: Karpenter Migration
+
+Replacing static managed node groups with Karpenter requires getting several pieces exactly right:
+
+- **IRSA setup** — IAM Role for Service Accounts with the correct trust policy for the Karpenter controller
+- **SQS queue** — for interruption handling on Spot instances
+- **EC2NodeClass manifest** — specifying AMI family, subnet selectors, security groups
+- **NodePool manifest** — instance type requirements, disruption budgets, expiry TTLs
+
+Getting any of these wrong produces nodes that never join, or Spot instances that drain without replacement. We fed Claude the EKS v1.33 constraints and our existing VPC subnet tags. It generated the `karpenter-helm.tf`, the IRSA policy JSON, the `EC2NodeClass`, and the `NodePool` manifests — all correctly wired together from the first apply.
+
+```hcl
+# Generated EC2NodeClass (excerpt)
+spec:
+  amiFamily: AL2023
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: ${cluster_name}
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: ${cluster_name}
+```
+
+The Spot interruption handler, SQS queue ARN, and IRSA trust relationship all landed correctly the first time.
+
+---
+
+## Problem 3: RDS and Automated Backup Orchestration
+
+The data layer required:
+
+- RDS parameter groups tuned for the MSTR workload
+- Subnet group scoped to private subnets only
+- Security group rules allowing EKS worker nodes, blocking everything else
+- S3 bucket with lifecycle rules for backup rotation
+- Post-deployment initialization scripts: database creation, user grants, schema load
+
+For the last part, we had an internal `RESTORE_PROCESS_EXPLAINED.md` document — a human-written runbook explaining how we restore from backup. Claude read it and generated the corresponding AWS CLI commands and SQL scripts:
+
+```bash
+# Generated from RESTORE_PROCESS_EXPLAINED.md
+aws s3 cp s3://${BACKUP_BUCKET}/latest/mstr.dump /tmp/mstr.dump
+pg_restore --host=${RDS_ENDPOINT} --username=mstr_admin \
+           --dbname=mstr --no-owner /tmp/mstr.dump
+```
+
+The ability to read a prose document and produce correct, contextualised scripts — rather than generic examples — was the highest-leverage use of AI in the entire project.
+
+---
+
+## Problem 4: KMS Permission Debugging
+
+Mid-deployment, EKS secret encryption failed. The error:
+
+```
+Error: failed to create secret: Forbidden
+  AccessDeniedException: The ciphertext refers to a customer master key
+  that does not exist, does not exist in this region, or you are not
+  allowed to access it.
+```
+
+We pasted the error into Claude Code along with the relevant Terraform module. It identified the issue immediately: the EKS node role was missing `kms:GenerateDataKey` and `kms:Decrypt` on the cluster encryption key ARN. It produced the exact IAM policy JSON to add:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["kms:GenerateDataKey", "kms:Decrypt"],
+  "Resource": "${aws_kms_key.eks.arn}"
+}
+```
+
+Debugging IAM permission errors normally means cross-referencing CloudTrail logs, AWS docs, and Terraform state simultaneously. Having an assistant that holds all three in context simultaneously cuts that loop from 30 minutes to 3.
+
+---
+
+## What Claude Code Actually Changed
+
+The value wasn't code generation in isolation. It was **contextual orchestration** — understanding that the Karpenter IRSA role ARN needed to flow from Module A's output into Module B's `dependency.outputs.karpenter_role_arn`, and that the RDS security group ID needed to propagate into the EKS worker node security group rule in Module C.
+
+That multi-module awareness — reading the Terragrunt dependency graph as a system, not as individual files — is where AI assistance moves from "helpful" to "transformative."
+
+| What we did manually | What Claude Code handled |
+|---------------------|--------------------------|
+| Architecture decisions | Module decoupling and dependency graph |
+| Workload requirements | Karpenter EC2NodeClass + NodePool manifests |
+| Security policy design | IAM policy JSON from error logs |
+| Process documentation | CLI commands from runbook prose |
+
+---
+
+## Takeaways
+
+**Treat it as a pairing partner, not a search engine.** The gains compound when Claude Code has the full context — the existing `.tf` files, the error logs, the runbook document, the VPC tags. Feeding it isolated snippets produces generic output. Feeding it the system produces system-aware output.
+
+**The circular dependency problem is solved once, not every time.** Once Claude generated the decoupled module structure, that pattern reused across every subsequent EKS deployment. The first project pays the thinking cost; every project after inherits the solution.
+
+**Prose documents are a valid input.** The RESTORE_PROCESS_EXPLAINED.md → working bash scripts path was unexpected and high value. Any team with internal runbooks, architecture decision records, or process docs has a body of knowledge Claude Code can operationalise.
+
+**AI doesn't replace judgment — it removes friction.** Every architecture decision in this project was human-made. Claude Code removed the friction of translating those decisions into correct HCL, YAML, and policy JSON. The speed gain is real. The quality bar is higher because we could iterate faster.
+
+The future of infrastructure engineering is agentic. This project proved how much faster that future already is.
