@@ -1,0 +1,278 @@
+---
+title: "From Manual RAG to LangGraph + Cohere + RAGAS — What the Numbers Proved"
+date: "2026-04-08"
+tags: ["RAG", "LangGraph", "LangChain", "Cohere", "RAGAS", "Python", "Tamil", "AI", "Evaluation"]
+excerpt: "We rebuilt Villi Bharatam RAG from scratch using LangChain EnsembleRetriever, a LangGraph stateful pipeline, Cohere cross-encoder reranking, and RAGAS evaluation — then measured the difference. Faithfulness went from 0.000 to 0.889. Latency dropped 1.8x."
+category: "ai"
+published: true
+---
+
+A few days ago, I published a [full walkthrough](/posts/building-rag-on-tamil-epic/) of building production RAG on Villi Bharatam — a 15th-century Tamil retelling of the Mahabharata. 10,370 chunks. Hybrid retrieval with Chroma + BM25. Pydantic AI structured output with quote validation.
+
+The system worked. But two questions kept nagging:
+
+*Would LangChain's EnsembleRetriever be better than our manual RRF code? Would Cohere's cross-encoder reranker actually improve retrieval quality — and by how much?*
+
+Today we answered both. We rebuilt the entire query pipeline using LangGraph + LangChain + Cohere Rerank, then ran a formal RAGAS evaluation comparing the two systems head-to-head on the same 10 questions.
+
+Here are the results first, then the full story.
+
+---
+
+## The Numbers
+
+| Metric | prod-bharatham-rag | langraph-bharatham-rag | Δ |
+|---|---|---|---|
+| **Faithfulness (RAGAS)** | 0.000 | **0.889** | ▲ 0.889 |
+| **Latency p50** | 6.7s | **3.7s** | ▲ 1.8x faster |
+| **Latency p99** | 8.1s | **5.4s** | ▲ 1.5x faster |
+
+Faithfulness of 0.889 means 89% of claims in the new system's answers are directly traceable to the retrieved chunks. RAGAS checked every statement against the actual passages. The old system scored 0.000 — not because it was wrong, but because the LLM was fabricating evidence quotes that RAGAS couldn't match back to retrieved context.
+
+---
+
+## Why we rebuilt it
+
+The original system was a linear Python pipeline:
+
+```
+query → embed → Chroma + BM25 → manual RRF → Pydantic AI → validate quotes → answer
+```
+
+It had three open problems:
+
+1. **Reranking was designed but never built.** We retrieved top-10 chunks by RRF score and passed all 10 to the LLM. RRF is a ranking signal, not a relevance signal — it measures whether a chunk appeared in both lists, not whether it actually answers the question.
+
+2. **Retry was LLM-only.** When quote validation failed, Pydantic AI retried the LLM with the same bad context. A completely wrong set of retrieved chunks would just fail twice.
+
+3. **No quality measurement.** `benchmark.py` measured latency (p50/p99). It had no way to answer "is the answer actually correct?"
+
+The new system addresses all three.
+
+---
+
+## What changed: the LangGraph pipeline
+
+The new pipeline is a stateful graph, not a linear script. Each node does one thing. The graph decides what happens next based on what came back.
+
+```
+[detect_language]
+      ↓
+[retrieve]  ← Tamil: EnsembleRetriever (Chroma + BM25 via RRF)
+            ← English: Chroma only (BM25 on English vs Tamil = noise)
+      ↓
+[rerank]    ← Cohere rerank-multilingual-v3.0 → top-10 to top-4
+      ↓ confidence = not_found?
+    skip ──────────────────────→ [skip_llm] → END
+      ↓ has results
+[build_context]
+      ↓
+[generate]  ← ChatOpenAI via OpenRouter
+      ↓
+[validate]  ← quote grounding check
+      ↓ fail + loops < 2?
+   re-retrieve ────────────────→ [retrieve]   ← fresh context, not just LLM retry
+      ↓ pass
+    END
+```
+
+The critical new edge: **when quote validation fails, the graph loops back to retrieval** — not just to the LLM. It gets a different set of chunks and tries again. The old system would fail on the same bad context twice and crash.
+
+---
+
+## LangChain EnsembleRetriever
+
+The old system had ~60 lines of manual RRF code. The new one has 5:
+
+```python
+ensemble = EnsembleRetriever(
+    retrievers = [chroma_retriever, bm25_retriever],
+    weights    = [0.5, 0.5],
+)
+docs = ensemble.invoke(question)
+```
+
+`EnsembleRetriever` handles the RRF merge internally. Tamil queries use both retrievers. English queries use Chroma only — we detect language with `langdetect` first and route accordingly, exactly as before.
+
+The Chroma retriever wraps our existing `chroma-db/` on disk — no re-embedding needed. We pointed LangChain's wrapper at the same persistent collection `prod-bharatham-rag` had already built.
+
+---
+
+## Cohere Reranking — the biggest single improvement
+
+This is the change that drove the faithfulness jump.
+
+A cross-encoder reads the query and each candidate chunk **together as a pair**. It's not comparing embeddings in isolation — it's reading "does this specific passage answer this specific question?" The output is a 0–1 relevance score per chunk.
+
+```python
+co = cohere.Client(COHERE_KEY)
+response = co.rerank(
+    model     = "rerank-multilingual-v3.0",
+    query     = question,
+    documents = [d.page_content for d in docs],
+    top_n     = 4,
+)
+reranked = [docs[r.index] for r in response.results]
+```
+
+`rerank-multilingual-v3.0` natively supports Tamil — no translation, no workaround. We retrieve top-10 from Chroma + BM25, then rerank to top-4. The 4 chunks passed to the LLM are the ones the cross-encoder judged most relevant.
+
+**Why this fixes faithfulness:** the old system passed 10 chunks to the LLM, including several that were tangentially related. The LLM would sometimes generate claims based on those weak matches — producing answers that couldn't be traced back to the strong chunks. With Cohere narrowing to top-4, the LLM has a tighter, more relevant context. Less noise means fewer fabricated statements.
+
+**Confidence from Cohere score, not RRF:**
+
+The old system derived confidence from RRF score — which broke when we scaled from 1,233 to 10,370 chunks. RRF scores naturally compress with larger corpora.
+
+Cohere's relevance score is 0–1 and absolute — it doesn't change with corpus size:
+
+```python
+def cohere_score_to_confidence(score: float):
+    if score >= 0.75: return "high"
+    if score >= 0.45: return "medium"
+    if score >= 0.15: return "low"
+    return "not_found"
+```
+
+---
+
+## RAGAS — measuring quality, not just speed
+
+`benchmark.py` measured latency. It couldn't tell us whether the answers were actually correct. RAGAS fills that gap.
+
+RAGAS is an evaluation framework specifically for RAG systems. It scores without needing human-labelled ground truth answers. We used one metric:
+
+**Faithfulness** — for each claim in the answer, does it appear in the retrieved context? RAGAS uses an LLM judge to decompose the answer into atomic statements, then checks each one against the retrieved chunks.
+
+```python
+from ragas.metrics._faithfulness import faithfulness
+from ragas.llms import llm_factory
+from openai import OpenAI
+
+# Use OpenRouter as judge — no separate OpenAI key needed
+client = OpenAI(api_key=OPENROUTER_KEY, base_url="https://openrouter.ai/api/v1")
+faithfulness.llm = llm_factory("openai/gpt-4o-mini", client=client)
+
+result = ragas_evaluate(dataset=dataset, metrics=[faithfulness])
+```
+
+**One critical lesson from integrating RAGAS:**
+
+RAGAS v0.4 has two sets of metrics that look the same but aren't:
+
+- `ragas.metrics.collections.Faithfulness` — new-style class, NOT a valid `Metric` instance, RAGAS's own `evaluate()` rejects it
+- `ragas.metrics._faithfulness.faithfulness` — pre-instantiated singleton, IS a valid `Metric` instance, works correctly
+
+Always import from the underscore modules. The `collections` namespace is aspirational API that RAGAS's own evaluate loop doesn't yet accept.
+
+Also: **RAGAS calls `asyncio.run()` internally.** If you call `ragas_evaluate()` inside an `async` function that's already under `asyncio.run()`, it deadlocks. The fix is to collect all answers first (async), then call RAGAS scoring in a plain sync function.
+
+---
+
+## Debugging log — what broke and why
+
+Building this took longer than expected. The issues were instructive.
+
+**`ModuleNotFoundError: No module named 'prod_query'`**
+
+`import prod_query` at module level runs before `if __name__ == "__main__":` where we had the `importlib` loader. Fix: move the loader to module level.
+
+**`mistralai.Mistral` import error in RAGAS**
+
+`instructor` (a RAGAS dependency) checks if `mistralai` is installed, then imports `from mistralai import Mistral`. `mistralai` v2.x is a namespace package with no `__init__.py` — `Mistral` doesn't exist at the top level. Fix: add a stub `__init__.py` to the namespace package with `class Mistral: pass`.
+
+**`ValueError: context_precision requires 'reference' column`**
+
+`context_precision` in RAGAS requires ground truth reference answers. We don't have those. Switched to `faithfulness` and `answer_relevancy` — both work without ground truth. Then `answer_relevancy` returned `NaN` because it needs `embed_query()` on the embeddings object and the RAGAS `embedding_factory` returns an object without that method. Dropped `answer_relevancy`, kept `faithfulness` only.
+
+**`TypeError: All metrics must be initialised metric objects`**
+
+RAGAS's `evaluate()` validates metrics with `isinstance(m, Metric)`. The `collections.*` metrics fail this check. The `_*.faithfulness` singletons pass it.
+
+**Chroma deprecation**
+
+`from langchain_community.vectorstores import Chroma` is deprecated in LangChain 1.x. Fix: `pip install langchain-chroma` and `from langchain_chroma import Chroma`.
+
+---
+
+## The compare.py output — the most readable result
+
+RAGAS gives you numbers. `compare.py` gives you the actual answers side by side. This was more informative:
+
+```
+Q: திரௌபதி யார்?
+══════════════════════════════════════════════════
+PROD-BHARATHAM-RAG           │ LANGRAPH-BHARATHAM-RAG
+─────────────────────────────┼─────────────────────
+not_found                    │ திரௌபதி, பாண்டவரின் மனைவியாகவும்,
+                             │ யாகபத்தினியாகவும் அமைந்தவர்.
+─────────────────────────────┼─────────────────────
+Conf: low  | 0 cites         │ Conf: low (Cohere=0.26) | 2 cites
+Time: 7.0s                   │ Time: 4.6s
+
+Q: பீஷ்மர் யார்?
+PROD-BHARATHAM-RAG           │ LANGRAPH-BHARATHAM-RAG
+─────────────────────────────┼─────────────────────
+ERROR: quote validation       │ பீஷ்மர், "தெய்வத்தன்மையுள்ள பீஷ்மன்‌
+failed (2 retries)            │ முதலான அரசர்களெல்லோரும்‌..."
+─────────────────────────────┼─────────────────────
+Conf: error | 13.6s          │ Conf: low (Cohere=0.29) | 3.2s
+```
+
+Prod errored on 2 of 3 questions. New system answered all 3. The faithfulness numbers follow directly from this — you can't score faithfulness on an empty answer.
+
+---
+
+## When to use LangGraph vs a linear pipeline
+
+LangGraph adds overhead: graph compilation, state management, conditional routing. For a simple single-shot RAG query, it's more than you need.
+
+The value shows up when you need:
+
+- **Loops** — retry retrieval, not just the LLM
+- **Conditions** — skip the LLM entirely if confidence is not_found
+- **Multi-hop questions** — "What did Krishna say to Arjuna, and how does that compare to Bhishma's advice?" — two retrieval passes, one answer
+- **Streaming** — yield tokens per node so the UI can show progress
+- **Observability** — LangSmith traces every node automatically
+
+For Villi Bharatam, the re-retrieval loop on bad quotes was the immediate win. The multi-hop support is the next step.
+
+---
+
+## Project structure
+
+```
+langraph-bharatham-rag/
+├── graph.py       # LangGraph pipeline — the new query engine
+├── compare.py     # side-by-side answer diff of both systems
+├── evaluate.py    # RAGAS faithfulness scoring
+├── requirements.txt
+├── .env           # API keys (not committed)
+└── .gitignore
+```
+
+Reuses the existing Chroma DB and BM25 index from `prod-bharatham-rag/` — no re-embedding needed.
+
+---
+
+## Key takeaways
+
+**1. Cross-encoder reranking is worth it.**
+Embedding distance finds related chunks. A cross-encoder finds chunks that answer the specific question. For a literary corpus where many passages are thematically similar, this distinction matters enormously.
+
+**2. Measure faithfulness, not just latency.**
+A system that answers fast but fabricates citations is worse than a slower system that stays grounded. `benchmark.py` gave us speed. RAGAS gave us quality. You need both.
+
+**3. LangGraph's retry loop is fundamentally different from Pydantic AI's ModelRetry.**
+`ModelRetry` reruns the LLM with the same retrieved context. The graph loops back to retrieval — fresh context, different chunks. If the first retrieval was wrong, only one of these can fix it.
+
+**4. RAGAS has sharp edges in v0.4.**
+The `collections.*` metrics look correct but don't pass RAGAS's own validation. Use `ragas.metrics._*` singletons. Run scoring outside `asyncio.run()`. Read the source before trusting the docs.
+
+**5. Don't use the same LLM as judge and generator.**
+We used the same OpenRouter `gpt-4o-mini` for both generation and RAGAS evaluation. The judge will be more lenient on its own output than a neutral evaluator. Ideally use a separate model — or at minimum, accept that your faithfulness scores are slightly optimistic.
+
+---
+
+The full code is in [ai-learning/rag-learning/tamil-rag/langraph-bharatham-rag](https://github.com/nishokvg/ai-learning/tree/main/rag-learning/tamil-rag/langraph-bharatham-rag).
+
+The previous article covering Phase 1 (FAISS, Bamini encoding, OCR) and Phase 2 (Chroma, verse-boundary chunking, Pydantic AI) is here: [Building RAG on a 2177-Page Tamil Epic](/posts/building-rag-on-tamil-epic/).
