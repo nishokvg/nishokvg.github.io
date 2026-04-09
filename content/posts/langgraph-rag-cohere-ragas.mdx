@@ -21,6 +21,31 @@ Here are the results first, then the full story.
 
 ## The Numbers
 
+```bash
+$ python3 evaluate.py --quick
+
+── Collecting prod-bharatham-rag answers ──
+  [prod 1/3] கர்ணன் யார்? அவன் பிறப்பு என்ன?...   → 3.9s [low]
+  [prod 2/3] திரௌபதி யார்?...                       → 8.1s [low]
+  [prod 3/3] பீஷ்மர் யார்?...                       → 6.7s [low]
+
+── Collecting langraph-bharatham-rag answers ──
+  [new  1/3] கர்ணன் யார்? அவன் பிறப்பு என்ன?...   → 3.7s [low]
+  [new  2/3] திரௌபதி யார்?...                       → 3.4s [low]
+  [new  3/3] பீஷ்மர் யார்?...                       → 5.4s [low]
+
+========================================================================
+RAGAS EVALUATION — prod-bharatham-rag  vs  langraph-bharatham-rag
+========================================================================
+Metric                             prod    new (LangGraph)         Δ
+────────────────────────────────────────────────────────────────────────
+faithfulness                      0.000              0.889  ▲0.889
+────────────────────────────────────────────────────────────────────────
+Latency p50                        6.7s               3.7s
+Latency p99                        8.1s               5.4s
+========================================================================
+```
+
 | Metric | prod-bharatham-rag | langraph-bharatham-rag | Δ |
 |---|---|---|---|
 | **Faithfulness (RAGAS)** | 0.000 | **0.889** | ▲ 0.889 |
@@ -196,7 +221,11 @@ RAGAS's `evaluate()` validates metrics with `isinstance(m, Metric)`. The `collec
 
 ## The compare.py output — the most readable result
 
-RAGAS gives you numbers. `compare.py` gives you the actual answers side by side. This was more informative:
+RAGAS gives you numbers. `compare.py` gives you the actual answers side by side. This was more informative.
+
+```bash
+$ python3 compare.py --quick
+```
 
 ```
 Q: திரௌபதி யார்?
