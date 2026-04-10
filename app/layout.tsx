@@ -30,6 +30,11 @@ export const metadata: Metadata = {
   description:
     "Ancient wisdom. Modern infrastructure. One life, many threads. — Nishok Vishnu Ganesan's personal blog on SRE, AI/ML, Tamil literature, and life.",
   keywords: ["SRE", "AI", "ML", "Kubernetes", "Tamil", "Thirukkural", "cloud", "blog", "Nishok"],
+  alternates: {
+    types: {
+      "application/rss+xml": "https://nishokvg.github.io/feed.xml",
+    },
+  },
 };
 
 export default function RootLayout({
