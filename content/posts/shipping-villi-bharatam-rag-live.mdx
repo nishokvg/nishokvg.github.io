@@ -1,0 +1,312 @@
+---
+title: "Shipping Villi Bharatam RAG Live — From Local Pipeline to Hugging Face Spaces"
+date: "2026-04-19"
+tags: ["RAG", "LangGraph", "Gradio", "Hugging Face", "Python", "Tamil", "AI", "Deployment"]
+excerpt: "We took our 11,999-chunk Tamil RAG pipeline live on Hugging Face Spaces — added the missing Drona Parva, fixed cross-lingual retrieval that was silently failing on English queries, and debugged every layer from Tesseract OCR to Cohere reranking thresholds."
+category: "ai"
+published: true
+---
+
+I had a RAG system that worked perfectly on my laptop. 10,370 chunks of a 15th-century Tamil epic. Hybrid retrieval. Cohere reranking. LangGraph pipeline with retry loops. RAGAS-validated faithfulness of 0.889.
+
+Then I tried to put it on the internet.
+
+It didn't answer a single question.
+
+This is the story of going from "works locally" to "works for anyone" — and everything that broke in between.
+
+---
+
+## Starting point
+
+Two previous articles cover how we got here:
+
+1. [Building RAG on a 2177-Page Tamil Epic](/posts/building-rag-on-tamil-epic/) — OCR, Bamini encoding, hybrid retrieval, Chroma + BM25, Pydantic AI
+2. [From Manual RAG to LangGraph + Cohere + RAGAS](/posts/langgraph-rag-cohere-ragas/) — LangGraph stateful pipeline, Cohere cross-encoder reranking, RAGAS evaluation
+
+The system was production-quality code running on localhost. The goal today: make it a live app anyone can use.
+
+---
+
+## The gap analysis
+
+Before shipping, we audited the entire pipeline. Here's what we found:
+
+| # | Gap | Severity |
+|---|-----|----------|
+| 1 | **Parva 7 (Drona) missing** — PARVA_NAMES jumps from 06 to 08 | High |
+| 2 | **Retrievers rebuilt per query** — BM25 + Chroma re-initialised on every call | Medium |
+| 3 | **English queries silently fail** — Cohere rerank scores near-zero for cross-lingual, causing skip_llm to fire | High |
+| 4 | **Not-found response always Tamil** — English user gets Tamil error message | Low |
+| 5 | **No startup validation** — missing API keys fail at query time, not boot time | Low |
+| 6 | **Stale nested git repo** — placeholder HF Space directory with its own `.git` | Low |
+
+Gap #3 turned out to be the most interesting. More on that below.
+
+---
+
+## Adding Drona Parva — the full pipeline
+
+The Mahabharata has 18 parvas. Villi Bharatam covers 9. We had 8 indexed — Parva 7 (Drona Parva / துரோண பருவம்) was missing entirely. The source PDF existed but had never been processed.
+
+The pipeline to add it:
+
+```
+PDF (331 pages)
+  → Tesseract OCR (tam+eng, DPI=200, batch_size=10)
+  → ocr_extract.py → clean UTF-8 Tamil text
+  → extract_by_color.py → verse/commentary separation
+  → ingest.py → chunk (800 tokens, 150 overlap)
+  → embed via OpenRouter text-embedding-3-small
+  → store in Chroma + rebuild BM25
+```
+
+```bash
+$ python3 ocr_extract.py --parva 7
+
+OCR: 07-துரோணபருவம்.pdf (331 pages, batch_size=10)
+  Pages 50/331 | 26.3 pages/min | ETA: 10.7 min
+  Pages 100/331 | 26.5 pages/min | ETA: 8.7 min
+  ...
+  Pages 331/331 | 26.7 pages/min | ETA: 0.0 min
+  Done in 743s
+
+$ python3 ingest.py --openrouter --parva 7
+
+Step 1/3 — Chunking (~800 tokens, page-boundary aware)...
+  துரோண பருவம்: 1629 chunks, avg 716 tokens | OCR (331 pages)
+
+Step 2/3 — Embedding 1629 chunks (openrouter)...
+  Done in 160.5s — shape (1629, 1536)
+
+Step 3/3 — Storing in Chroma...
+  Chroma: 11999 vectors total
+```
+
+One catch: `ingest.py --parva 7` correctly adds new chunks to Chroma, but rebuilds BM25 only over Parva 7 chunks. The comment says "Always rebuild BM25 over full corpus" — but `all_chunks` is filtered by `--parva`. A follow-up `python3 ingest.py --openrouter` (no parva filter) fixed it — skipped the Chroma step (all chunks already indexed) and rebuilt BM25 over all 11,999 chunks.
+
+### Sanity check
+
+```
+chunks_meta.json : 11999
+bm25.pkl chunks  : 11999
+chroma vectors   : 11999
+All three stores consistent
+
+Parva coverage: 01, 02, 03, 04, 05, 06, 07, 08, 09
+All 9 parvas present
+
+Chunk ID uniqueness: 11999 unique IDs
+Chroma <-> metadata: Perfect ID match
+```
+
+---
+
+## Deploying to Hugging Face Spaces
+
+The deployment target is a Gradio app on [Hugging Face Spaces](https://huggingface.co/spaces/nishokvg/villi-bharatam-rag). The architecture:
+
+```
+app.py (Gradio UI)
+  └── graph.py (LangGraph RAG pipeline)
+       ├── chroma-db/     (172MB, Git LFS)
+       ├── bm25.pkl       (34MB, Git LFS)
+       └── chunks_meta.json (16MB, Git LFS)
+```
+
+HF Spaces runs the app from `app.py`, installs dependencies from `requirements.txt`, and reads config from `README.md` frontmatter:
+
+```yaml
+sdk: gradio
+sdk_version: 5.25.0
+app_file: app.py
+```
+
+API keys go in **Repository Secrets** — encrypted at rest, injected as env vars at runtime, never in git. `graph.py` reads them with `os.environ.get()`.
+
+### First deployment failure: Python 3.13
+
+```
+ModuleNotFoundError: No module named 'audioop'
+```
+
+HF Spaces runs Python 3.13, which removed `audioop`. Our pinned `gradio==4.44.0` depended on `pydub` which imported it. Fix: upgrade to `gradio>=5.0.0`.
+
+### Second failure: Git authentication
+
+```
+fatal: could not read Username for 'https://huggingface.co': Device not configured
+```
+
+Git had no stored credentials for HF. Fix:
+
+```bash
+$ pipx install huggingface_hub
+$ hf auth login --add-to-git-credential
+```
+
+Then push with `git push origin master:main --force` (force because the remote had a different root commit from the placeholder Space).
+
+---
+
+## The cross-lingual retrieval failure
+
+The app deployed. It started. Then I typed "Who is Karna and what is his role in the epic?" and got:
+
+```
+Answer: இந்த தகவல் கொடுக்கப்பட்ட பக்கங்களில் இல்லை.
+Confidence: Not found in corpus
+```
+
+The most basic question about the most important character. "Not found."
+
+### Debugging
+
+Ran the pipeline locally with debug output:
+
+```python
+# English query → Cohere rerank scores on Tamil chunks
+score=0.0084 | வீட்டும பருவம்
+score=0.0054 | உத்தியோக பருவம்
+score=0.0046 | கன்ன பருவம்
+score=0.0020 | துரோண பருவம்
+
+Top score: 0.0084 → confidence: not_found
+```
+
+Compare with the same question in Tamil:
+
+```python
+# Tamil query → Cohere rerank scores
+score=0.6268 | கன்ன பருவம்
+score=0.4926 | சபா பருவம்
+score=0.4221 | விராட பருவம்
+score=0.1551 | ஆரணிய பருவம்
+
+Top score: 0.6268 → confidence: medium
+```
+
+The Cohere `rerank-multilingual-v3.0` model scores English-query-on-Tamil-corpus near zero. Not because the chunks are irrelevant — the embedding retrieval found good chunks — but because the cross-encoder can't bridge the language gap well enough to give a high relevance score.
+
+Our confidence thresholds:
+
+```python
+def cohere_score_to_confidence(score):
+    if score >= 0.75: return "high"
+    if score >= 0.45: return "medium"
+    if score >= 0.15: return "low"
+    return "not_found"
+```
+
+And the routing logic:
+
+```python
+def route_after_rerank(state):
+    return "skip_llm" if state["confidence"] == "not_found" else "generate"
+```
+
+Every English query scored below 0.15, hit `not_found`, and skipped the LLM entirely. The retrieval was fine. The reranking was fine. The *gate* was wrong.
+
+### The fix: remove the gate entirely
+
+The first instinct was to lower the threshold. We tried 0.005. It helped for "Who is Karna" but still failed for filtered queries like "What happens during the dice game?" + Parva 2 filter.
+
+The real fix: **remove the `skip_llm` gate entirely.** The LLM's system prompt already says "If the answer is not in the passages, say so clearly." Let the LLM see the passages and decide for itself — it's better at cross-lingual relevance judgment than a reranker score threshold.
+
+```python
+# Before: conditional routing
+graph.add_conditional_edges("rerank", route_after_rerank,
+    {"generate": "build_context", "skip_llm": "skip_llm"})
+
+# After: always generate
+graph.add_edge("rerank", "build_context")
+```
+
+The Cohere confidence score still gets attached to the answer — it's useful metadata. It just doesn't gatekeep LLM access anymore.
+
+### Also fixed: retriever routing
+
+The original pipeline used the ensemble retriever (Chroma + BM25) only for Tamil queries, and Chroma-only for English:
+
+```python
+retriever = ensemble_ret if state["is_tamil"] else chroma_ret
+```
+
+The reasoning was that BM25 on Tamil tokens wouldn't match English terms. But the ensemble with RRF naturally downweights the BM25 side when there are no keyword matches — there's no penalty for including it. Changed to always use ensemble:
+
+```python
+docs = ensemble_ret.invoke(state["question"])
+```
+
+### Result
+
+```python
+# Before fix
+Q: "What happens during the dice game?" (Parva 2)
+A: "This information was not found in the corpus."
+
+# After fix
+Q: "What happens during the dice game?" (Parva 2)
+A: "கூட்டத்தில் நடந்த காசு விளையாட்டில், யுதிஷ்டிரன் தன் சகோதரர்களையும்..."
+Evidence: [சபா பருவம், p93]
+```
+
+---
+
+## Final state
+
+The live app: **[nishokvg/villi-bharatam-rag](https://huggingface.co/spaces/nishokvg/villi-bharatam-rag)**
+
+```
+Corpus:   9 parvas, 2508 pages, 11999 chunks
+Stack:    LangGraph + LangChain + Chroma + BM25 + Cohere rerank + GPT-4o-mini
+UI:       Gradio on HF Spaces
+Code:     github.com/nishokvg/villi-bharatam-rag
+```
+
+Features:
+- Questions in Tamil or English
+- Optional parva filter
+- Confidence scoring from Cohere rerank
+- Citations with exact quotes, parva name, and page number
+- Quote grounding validation with re-retrieval on failure
+- Debug accordion showing retrieved passages with Cohere scores
+
+---
+
+## What I learned shipping this
+
+**1. "Works locally" and "works in production" are separated by a wall of environment differences.**
+Python version, package versions, auth mechanisms, env var injection — every layer can break independently. The app worked perfectly on my Mac with Python 3.14. It crashed on HF Spaces with Python 3.13 because of a removed stdlib module.
+
+**2. Cross-lingual retrieval needs end-to-end testing, not component testing.**
+Each component worked in isolation. The embedding retrieval found relevant Tamil chunks for English queries. The Cohere reranker scored and sorted them correctly. The LLM could generate answers from Tamil context. But the *gate between reranking and generation* — a threshold that assumed monolingual scores — broke the entire chain. You have to test the full pipeline with realistic queries in every supported language.
+
+**3. Threshold-based gates are fragile. Let the LLM decide relevance.**
+A reranker score of 0.008 doesn't mean "irrelevant." It means "the cross-encoder model isn't confident about cross-lingual relevance." The retrieved chunks were actually good — the LLM proved it by generating correct, cited answers from them. Hard-coding a score threshold as a gate throws away valid results. Use the score as metadata, not as a gatekeeper.
+
+**4. Git LFS is mandatory for ML artifacts, and you will forget to set it up.**
+222MB of Chroma DB + BM25 index. Without LFS, `git push` would either fail or bloat the repo permanently. `.gitattributes` must be configured before the first commit, not after.
+
+**5. Remove hardcoded API keys before they end up in git history.**
+We found the same OpenRouter key hardcoded as a fallback default in 5 Python files across two repos. `os.environ.get("KEY", "sk-or-v1-...")` looks safe — it reads from env vars! — but the literal string is in the source file, in every commit, forever. The fix is `os.environ.get("KEY", "")` plus a startup check that fails fast if the key is missing.
+
+---
+
+## What's next
+
+The app is live but basic. The planned improvements, in order:
+
+1. **Cache retrievers at startup** — currently `build_retrievers()` creates a new ChromaDB client and materialises 11,999 BM25 documents on every query
+2. **Add query-level caching** — repeated questions hit all external APIs every time
+3. **Evaluation suite** — 20-50 gold questions to measure retrieval quality after changes
+4. **Streaming responses** — GPT-4o-mini supports streaming, would make the UI feel faster
+5. **Multi-turn conversation** — currently stateless per question
+
+---
+
+The full code: [github.com/nishokvg/villi-bharatam-rag](https://github.com/nishokvg/villi-bharatam-rag)
+
+Previous articles:
+- [Building RAG on a 2177-Page Tamil Epic](/posts/building-rag-on-tamil-epic/)
+- [From Manual RAG to LangGraph + Cohere + RAGAS](/posts/langgraph-rag-cohere-ragas/)
