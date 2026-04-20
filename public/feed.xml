@@ -5,10 +5,25 @@
     <link>https://nishokvg.github.io</link>
     <description>Engineering blog covering SRE, AI/ML, Tamil literature, and cloud infrastructure by Nishok VG.</description>
     <language>en-us</language>
-    <lastBuildDate>Fri, 10 Apr 2026 04:49:27 GMT</lastBuildDate>
+    <lastBuildDate>Mon, 20 Apr 2026 04:39:54 GMT</lastBuildDate>
     <atom:link href="https://nishokvg.github.io/feed.xml" rel="self" type="application/rss+xml"/>
     <managingEditor>Nishok VG</managingEditor>
     <webMaster>Nishok VG</webMaster>
+  <item>
+    <title>Shipping Villi Bharatam RAG Live — From Local Pipeline to Hugging Face Spaces</title>
+    <link>https://nishokvg.github.io/posts/shipping-villi-bharatam-rag-live/</link>
+    <guid isPermaLink="true">https://nishokvg.github.io/posts/shipping-villi-bharatam-rag-live/</guid>
+    <pubDate>Sun, 19 Apr 2026 00:00:00 GMT</pubDate>
+    <description>We took our 11,999-chunk Tamil RAG pipeline live on Hugging Face Spaces — added the missing Drona Parva, fixed cross-lingual retrieval that was silently failing on English queries, and debugged every layer from Tesseract OCR to Cohere reranking thresholds.</description>
+    <category>RAG</category>
+    <category>LangGraph</category>
+    <category>Gradio</category>
+    <category>Hugging Face</category>
+    <category>Python</category>
+    <category>Tamil</category>
+    <category>AI</category>
+    <category>Deployment</category>
+  </item>
   <item>
     <title>From Manual RAG to LangGraph + Cohere + RAGAS — What the Numbers Proved</title>
     <link>https://nishokvg.github.io/posts/langgraph-rag-cohere-ragas/</link>
