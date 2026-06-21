@@ -2,3 +2,8 @@ node_modules/
 .next/
 out/
 .env*
+
+# Notes are synced in from the nishok-notes repo at build time (see scripts/sync-notes.mjs).
+# They are generated artifacts here, not source — never commit them.
+content/notes/
+public/notes/

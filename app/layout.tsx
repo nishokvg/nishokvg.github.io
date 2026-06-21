@@ -75,6 +75,8 @@ export default function RootLayout({
             <div className="flex items-center gap-6">
               <a href="/" className="text-sm transition-colors hover:text-[var(--accent-indigo)]"
                  style={{ color: "var(--text-secondary)" }}>Home</a>
+              <a href="/notes" className="text-sm transition-colors hover:text-[var(--accent-indigo)]"
+                 style={{ color: "var(--text-secondary)" }}>Notes</a>
               <a href="/about" className="text-sm transition-colors hover:text-[var(--accent-indigo)]"
                  style={{ color: "var(--text-secondary)" }}>About</a>
               <ThemeToggle />

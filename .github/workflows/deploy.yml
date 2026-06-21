@@ -3,6 +3,9 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+  # Triggered by a push to the nishok-notes repo (see that repo's notify-site workflow).
+  repository_dispatch:
+    types: [notes-updated]
   workflow_dispatch:
 
 permissions:
@@ -19,12 +22,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Pull in the notes content (public repo) so /notes can be built.
+      - uses: actions/checkout@v4
+        with:
+          repository: nishokvg/nishok-notes
+          path: _notes-src
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
       - run: npm ci
       - run: npm run build
+        env:
+          NOTES_SRC: ${{ github.workspace }}/_notes-src
       - uses: actions/upload-pages-artifact@v3
         with:
           path: ./out
