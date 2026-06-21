@@ -1,9 +1,8 @@
 import { notFound } from "next/navigation";
 import { Metadata } from "next";
-import { MDXRemote } from "next-mdx-remote/rsc";
 import { getAllNoteSlugs, getNote } from "@/lib/notes";
 import TagPill from "@/components/TagPill";
-import { mdxComponents } from "@/components/mdxComponents";
+import MdxContent from "@/components/MdxContent";
 
 interface Props {
   params: { slug: string };
@@ -81,7 +80,7 @@ export default function NotePage({ params }: Props) {
 
         {/* MDX body */}
         <div className="space-y-2">
-          <MDXRemote source={note!.content} components={mdxComponents} />
+          <MdxContent source={note!.content} />
         </div>
 
         {/* Footer */}

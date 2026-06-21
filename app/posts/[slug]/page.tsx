@@ -1,9 +1,8 @@
 import { notFound } from "next/navigation";
 import { Metadata } from "next";
-import { MDXRemote } from "next-mdx-remote/rsc";
 import { getAllPostSlugs, getPost, formatDate } from "@/lib/posts";
 import TagPill from "@/components/TagPill";
-import { mdxComponents } from "@/components/mdxComponents";
+import MdxContent from "@/components/MdxContent";
 
 interface Props {
   params: { slug: string };
@@ -81,7 +80,7 @@ export default function PostPage({ params }: Props) {
 
         {/* MDX body */}
         <div className="space-y-2">
-          <MDXRemote source={post!.content} components={mdxComponents} />
+          <MdxContent source={post!.content} />
         </div>
 
         {/* Footer */}
