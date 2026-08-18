@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { Metadata } from "next";
+import { SITE_URL, SITE_NAME } from "@/lib/site";
 import { getAllNoteSlugs, getNote } from "@/lib/notes";
 import TagPill from "@/components/TagPill";
 import MdxContent from "@/components/MdxContent";
@@ -15,7 +16,21 @@ export async function generateStaticParams() {
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const note = getNote(params.slug);
   if (!note) return { title: "Note Not Found" };
-  return { title: note.title, description: note.excerpt, keywords: note.tags };
+  const url = `${SITE_URL}/notes/${params.slug}/`;
+  return {
+    title: note.title,
+    description: note.excerpt,
+    keywords: note.tags,
+    alternates: { canonical: url },
+    openGraph: {
+      type: "article",
+      siteName: SITE_NAME,
+      url,
+      title: note.title,
+      description: note.excerpt,
+    },
+    twitter: { card: "summary", title: note.title, description: note.excerpt },
+  };
 }
 
 export default function NotePage({ params }: Props) {

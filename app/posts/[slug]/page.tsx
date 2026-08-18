@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { Metadata } from "next";
+import { SITE_URL, SITE_NAME } from "@/lib/site";
 import { getAllPostSlugs, getPost, formatDate } from "@/lib/posts";
 import TagPill from "@/components/TagPill";
 import MdxContent from "@/components/MdxContent";
@@ -15,7 +16,27 @@ export async function generateStaticParams() {
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const post = getPost(params.slug);
   if (!post) return { title: "Post Not Found" };
-  return { title: post.title, description: post.excerpt, keywords: post.tags };
+  const url = `${SITE_URL}/posts/${params.slug}/`;
+  return {
+    title: post.title,
+    description: post.excerpt,
+    keywords: post.tags,
+    alternates: { canonical: url },
+    openGraph: {
+      type: "article",
+      siteName: SITE_NAME,
+      url,
+      title: post.title,
+      description: post.excerpt,
+      publishedTime: post.date,
+      tags: post.tags,
+    },
+    twitter: {
+      card: "summary",
+      title: post.title,
+      description: post.excerpt,
+    },
+  };
 }
 
 export default function PostPage({ params }: Props) {

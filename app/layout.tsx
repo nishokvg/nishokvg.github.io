@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Playfair_Display, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { SITE_URL, SITE_NAME } from "@/lib/site";
 import ThemeToggle from "@/components/ThemeToggle";
 
 const inter = Inter({
@@ -30,6 +31,22 @@ export const metadata: Metadata = {
   description:
     "Ancient wisdom. Modern infrastructure. One life, many threads. — Nishok Vishnu Ganesan's personal blog on SRE, AI/ML, Tamil literature, and life.",
   keywords: ["SRE", "AI", "ML", "Kubernetes", "Tamil", "Thirukkural", "cloud", "blog", "Nishok"],
+  metadataBase: new URL(SITE_URL),
+  openGraph: {
+    type: "website",
+    siteName: SITE_NAME,
+    url: SITE_URL,
+    locale: "en_US",
+    title: SITE_NAME,
+    description:
+      "Ancient wisdom. Modern infrastructure. One life, many threads. — Nishok Vishnu Ganesan's personal blog on SRE, AI/ML, Tamil literature, and life.",
+  },
+  twitter: {
+    card: "summary",
+    title: SITE_NAME,
+    description:
+      "Ancient wisdom. Modern infrastructure. One life, many threads. — Nishok Vishnu Ganesan's personal blog on SRE, AI/ML, Tamil literature, and life.",
+  },
   alternates: {
     types: {
       "application/rss+xml": "https://nishokvg.github.io/feed.xml",
