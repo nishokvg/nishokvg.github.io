@@ -5,10 +5,26 @@
     <link>https://nishokvg.github.io</link>
     <description>Engineering blog covering SRE, AI/ML, Tamil literature, and cloud infrastructure by Nishok VG.</description>
     <language>en-us</language>
-    <lastBuildDate>Sun, 21 Jun 2026 00:47:12 GMT</lastBuildDate>
+    <lastBuildDate>Tue, 18 Aug 2026 01:18:42 GMT</lastBuildDate>
     <atom:link href="https://nishokvg.github.io/feed.xml" rel="self" type="application/rss+xml"/>
     <managingEditor>Nishok VG</managingEditor>
     <webMaster>Nishok VG</webMaster>
+  <item>
+    <title>LifeLens — Turning a Date of Birth Into a Story About the World</title>
+    <link>https://nishokvg.github.io/posts/lifelens-world-since-you-were-born/</link>
+    <guid isPermaLink="true">https://nishokvg.github.io/posts/lifelens-world-since-you-were-born/</guid>
+    <pubDate>Mon, 17 Aug 2026 00:00:00 GMT</pubDate>
+    <description>I built a Streamlit app that reframes World Bank development data around one anchor — your own lifetime. The story of the API traps that fail silently, why missing data is a render state instead of an exception, and what happens when the source refuses to publish a world total.</description>
+    <category>Python</category>
+    <category>Streamlit</category>
+    <category>Pandas</category>
+    <category>Plotly</category>
+    <category>World Bank</category>
+    <category>OpenData</category>
+    <category>DataVisualization</category>
+    <category>ClaudeCode</category>
+    <category>ProductThinking</category>
+  </item>
   <item>
     <title>Shipping Villi Bharatam RAG Live — From Local Pipeline to Hugging Face Spaces</title>
     <link>https://nishokvg.github.io/posts/shipping-villi-bharatam-rag-live/</link>

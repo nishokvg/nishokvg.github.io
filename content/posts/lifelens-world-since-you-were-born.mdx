@@ -1,0 +1,207 @@
+---
+title: "LifeLens — Turning a Date of Birth Into a Story About the World"
+date: "2026-08-17"
+tags: ["Python", "Streamlit", "Pandas", "Plotly", "World Bank", "OpenData", "DataVisualization", "ClaudeCode", "ProductThinking"]
+excerpt: "I built a Streamlit app that reframes World Bank development data around one anchor — your own lifetime. The story of the API traps that fail silently, why missing data is a render state instead of an exception, and what happens when the source refuses to publish a world total."
+category: "ai"
+published: true
+---
+
+Here is a true sentence:
+
+> Under-5 mortality in India fell from 126 to 27 per 1,000 live births.
+
+You just read past it. Everyone does. It is a real number describing millions of children who lived instead of died, and it lands with all the emotional weight of a parking receipt.
+
+Here is the same fact, moved:
+
+> In the year you were born, 126 of every 1,000 children did not reach their fifth birthday. Today, 27 do not.
+
+Nothing changed in the data. The source is the same World Bank series, the same two numbers, the same decades. Only the **frame of reference** moved — from "since 1990" to "since the year *you* were born."
+
+That reframing is the entire product. **LifeLens** takes a date of birth, a birth country and a current country, and tells you what changed in the world during your lifetime. This is the story of building it — and of the three places where public data quietly lies to you if you are not careful.
+
+**Live app:** [nishok-lifelens.streamlit.app](https://nishok-lifelens.streamlit.app/)
+
+---
+
+## What it actually does
+
+You enter a name (optional), a full date of birth, a birth country and a current country. On submit, the app fetches ten indicators for three geographies from the World Bank, and renders six tabs:
+
+- **📖 My Story** — exact age, days lived, and then-versus-now cards for population, life expectancy and internet use, each labelled with the year the value was *actually observed*
+- **📈 Lifetime in Data** — indicator, country and year-range controls over an interactive Plotly chart, with a raw-data table and CSV download underneath
+- **🌍 My Two Worlds** — birth country vs current country vs the world aggregate
+- **🗓️ Timeline & Discoveries** — a personal timeline marking ages 5, 10, 18, 21 and 30, plus curated milestone cards with your age at each event
+- **🌱 Earth & Resources** — resource depletion recorded during your lifetime, with a three-sheet Excel export
+- **🎯 Quiz & Share** — still a placeholder, and honestly labelled as one
+
+Stack: Python, Streamlit, Pandas, Plotly, the World Bank Indicators API. No API key. No database. No LLM anywhere in the product.
+
+---
+
+## Trap 1: the API returns HTTP 200 when it fails
+
+The World Bank Indicators API wraps every successful response as a **two-element array** — metadata first, rows second:
+
+```json
+[ {"page":1,"pages":1,"per_page":5000,"total":108},
+  [ {"indicator":{"id":"SP.DYN.LE00.IN"},
+     "countryiso3code":"IND","date":"1990","value":57.9}, ... ] ]
+```
+
+Send it a bad parameter and it replies with this:
+
+```json
+[ {"message":[{"id":"120","key":"Invalid value","value":"..."}]} ]
+```
+
+Status code: **200 OK**.
+
+`response.raise_for_status()` will not fire. `response.json()` will parse happily. If your parser reaches for `payload[1]`, you get an `IndexError` in the best case and an empty chart in the worst — and an empty chart looks exactly like "this country has no data," which is a lie you will ship to users.
+
+So the parser branches on **structure**, never on status code:
+
+```python
+def extract_rows(payload):
+    if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+        if payload[0].get("message"):
+            raise WorldBankError(f"World Bank API error — {detail}")
+
+    if not isinstance(payload, list) or len(payload) < 2:
+        raise WorldBankError("Unexpected response shape.")
+
+    rows = payload[1]
+    if rows is None:
+        return []          # valid query, zero observations — not an error
+    return [r for r in rows if isinstance(r, dict)]
+```
+
+Four outcomes, and they are genuinely different things: success, valid-but-empty, API error, and garbage. Collapsing "no data exists" into "the request failed" is the difference between a tab that says *"the World Bank does not publish this for Somalia"* and a tab that says *"something went wrong"* when nothing did.
+
+---
+
+## Trap 2: the default page size silently truncates
+
+The API's default `per_page` is **50**.
+
+A lifetime of 36 years across three geographies is 108 rows. Without an explicit `per_page`, you get 50 of them, HTTP 200, no warning, no `hasMore` flag anywhere you would notice — just a chart that ends early and looks plausible.
+
+```python
+_request(
+    f"country/{';'.join(codes)}/indicator/{code}",
+    {"date": f"{start_year}:{end_year}", "per_page": 5000},
+)
+```
+
+Over-request rather than paginate. At this data size, paginating is engineering effort spent on a problem that a single parameter solves.
+
+That `';'.join(codes)` is the other half of it. Semicolon-joining ISO3 codes fetches birth country, current country and the `WLD` aggregate in **one** request. Six development indicators become six HTTP calls, not eighteen. All ten indicators — six development, four environmental — are fetched once on submit and held in `session_state`, so switching tabs triggers zero network activity. The app feels instant after the first three seconds because it *is*.
+
+---
+
+## Trap 3: null is not zero, and a gap is not a line
+
+```python
+for row in rows:
+    value = row.get("value")
+    if value is None:
+        continue  # unreported; never fabricate
+```
+
+Three lines, and they are the most important ones in the codebase.
+
+A year the World Bank did not report must never become a number a user reads as fact. No interpolation. No forward-fill. No zero. The row simply does not exist in the tidy frame, the chart shows a visible gap, and the card says which year the value actually came from.
+
+This has a consequence that shapes the whole UI: **missing data is a render state, not an exception.** Every chart, every metric card and every generated sentence has a defined empty state. India's internet usage in 1990 is exactly zero, which makes percentage change undefined — so the app reports percentage-*point* change instead. The world aggregate for internet usage only begins in 2005, so for a 1990 lifetime that series starts partway through, and says so.
+
+Every fetch in the app — development or environmental — normalizes to one shape:
+
+```
+indicator | country_code | country_name | year | value
+```
+
+Charts, metric cards, narratives and the timeline all read that single contract. Adding a seventh indicator is one entry in a registry dict — code, label, unit, decimals, direction, emoji, caveat — and no new code path anywhere.
+
+---
+
+## The hardest product decision: when the source refuses to answer
+
+The 🌱 Earth & Resources tab reports energy, mineral and net forest depletion from the World Bank's adjusted-savings account.
+
+Users open that tab and immediately want one thing: **India vs the World.**
+
+The World Bank does not publish it. Not a World total, not a regional total, not an income-group total — I checked all 24 aggregate codes. For the three depletion flows, aggregates do not exist.
+
+There were three options:
+
+1. **Sum the countries myself.** This would manufacture the exact world total the World Bank deliberately declines to publish, and present my arithmetic as their data. No.
+2. **Grey out the comparison.** Technically honest, and a dead end for the reader.
+3. **Answer a different, answerable question.**
+
+Option 3 shipped. The tab ranks the country among everyone who reported:
+
+> *"India ranks 3rd of 216 countries that reported this measure in 2021."*
+
+That is an ordering of published values — never a sum. It answers the comparison impulse without inventing a number, and ties share a rank so two countries at the top are both 1st.
+
+The same honesty rule governs the tab's headline framing. It reports depletion that was **recorded**, not reserves that **remain**. This app will never tell you how much oil is left underground, because the source does not know either.
+
+---
+
+## Building it with an AI assistant, in phases
+
+This was built as a vibe-coding assignment, where the *process* is part of the deliverable — so the process got structured deliberately.
+
+**Architecture before code.** [DESIGN.md](https://github.com/nishokvg/lifelens/blob/main/DESIGN.md) came first: the layer diagram, the API strategy, the tidy-frame contract, a catalogue of every error and missing-data scenario, and an explicit MVP-versus-deferred split. Both API traps above were found *in the design phase*, by reading the API docs and response shapes carefully, before a single chart existed.
+
+**One architectural rule, enforced everywhere:** `app.py` owns every Streamlit call. Everything beneath it — two service modules, four util modules — is plain Python that runs and tests without a Streamlit runtime. That single constraint is what makes **167 unit tests** possible, all offline, none of them needing a browser or a live API.
+
+**One tab at a time.** Skeleton, then the data layer with tests, then My Story, then Lifetime in Data, then Two Worlds, then Timeline, then Earth & Resources. Each phase ended with something that ran.
+
+The deferred list was a scope commitment, not a wishlist. Parallel fetching, choropleth maps, animated charts, PDF export, LLM integration — all written down, all left out, because a close deadline meant the choice was *small, functional and polished* versus *broad and half-working*.
+
+---
+
+## What I learned
+
+**1. Reframing beats visualizing.**
+I did not find new data or build a better chart. I changed the x-axis label from a calendar to a life. The most valuable thing in this project is a sentence template, not a Plotly figure.
+
+**2. Silent failures are the expensive ones.**
+An exception tells you where to look. HTTP 200 with an error body, and a default page size that quietly halves your series, both produce output that *looks fine*. Every API integration deserves the question: what does this thing do when it fails without telling me?
+
+**3. "Missing data is a render state" is an architecture decision, not a UI detail.**
+Deciding that early meant every chart, card and sentence got an empty state by construction. Retrofitting it later would have meant touching every render path in a 2,000-line UI file.
+
+**4. Refusing to fabricate is a feature you have to design around.**
+The easy version of the Earth tab sums countries and prints a world total. The honest version required inventing a whole comparison model — rank, peers, coverage counts. Data honesty is not a disclaimer at the bottom; it costs real design work.
+
+**5. AI assistance scales with how well you decomposed the problem.**
+The phases where I had a written contract — "normalize to these five columns," "this registry is the only place indicator metadata lives" — went fast and stayed clean. The phases where I asked for a whole tab in one go needed the most rework. The assistant was never the bottleneck. The clarity of the spec was.
+
+**6. Plain English leads, the official name follows.**
+"Adjusted savings: net forest depletion" means nothing to a general reader. Every indicator carries both a `plain_label` and the official World Bank `label` — the plain one leads, the official one sits in muted text beneath it. Accessibility and provenance are not a trade-off; they are two lines of the same card.
+
+---
+
+## What's next
+
+It is live on Streamlit Community Cloud — the keyless API meant deployment needed nothing but a `requirements.txt`. From here:
+
+1. **Finish Quiz & Share** — the one tab still standing as a placeholder
+2. **Parallel fetching** with `ThreadPoolExecutor` — ten sequential requests is the whole of the load time
+3. **Localized milestones** — the current list is 34 hand-curated events, identical for every user regardless of country
+4. **More indicators** — the registry makes each one a single dict entry, which is exactly the point
+
+---
+
+Try it: [nishok-lifelens.streamlit.app](https://nishok-lifelens.streamlit.app/)
+
+The full code: [github.com/nishokvg/lifelens](https://github.com/nishokvg/lifelens)
+
+Data: [World Bank Open Data](https://data.worldbank.org) — World Development Indicators, retrieved live through the public, keyless [Indicators API](https://datahelpdesk.worldbank.org/knowledgebase/articles/889392).
+
+Previous articles:
+- [Shipping Villi Bharatam RAG Live on HF Spaces](/posts/shipping-villi-bharatam-rag-live/)
+- [Accelerating Enterprise EKS Deployments with Claude Code](/posts/eks-platform-claude-code/)
