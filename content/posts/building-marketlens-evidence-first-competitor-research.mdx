@@ -15,6 +15,8 @@ I built **MarketLens AI** to make that first pass more structured and more hones
 
 The code is available at [github.com/nishokvg/market-lens-arra](https://github.com/nishokvg/market-lens-arra).
 
+![MarketLens evidence-first research workflow](/marketlens-evidence-first-workflow.png)
+
 ---
 
 ## The problem: competitor research is not a one-prompt task
@@ -52,6 +54,23 @@ Streamlit brief
 
 The shared research state carries the user brief, candidate companies, source snippets, extracted facts, comparison rows, evidence coverage, integration status, errors, and reviewer notes between stages.
 
+The important choice was to make this state explicit rather than let each step pass unstructured prose to the next one:
+
+```python
+class ResearchState(TypedDict, total=False):
+    brief: dict[str, Any]
+    competitors: list[str]
+    sources: dict[str, list[dict[str, str]]]
+    facts: list[dict[str, Any]]
+    comparison_rows: list[dict[str, str]]
+    coverage_score: float
+    review_notes: list[str]
+    integration_status: dict[str, str]
+    errors: list[str]
+```
+
+That contract is what lets the UI expose each completed stage, lets the reviewer calculate coverage from evidence rather than model confidence, and lets a provider report an `unavailable` status without ending the run.
+
 ### The specialized roles
 
 The project brief called for discovery, research, extraction, and orchestration. I implemented those roles as focused LangGraph stages and tool-backed services rather than separate chat agents:
@@ -86,6 +105,23 @@ The app is deliberately designed so that an unavailable integration degrades cap
 | **Streamlit** | Provides the intake, stage visibility, evidence review, and approval UI. | Authentication or enterprise security by itself. |
 
 One important implementation detail: the original course brief named You.com as its primary search API. The working build uses Tavily, a functionally similar public-web research provider, because that was the configured integration during development. I am documenting that substitution rather than claiming literal You.com implementation.
+
+---
+
+## The rule that keeps extraction honest
+
+The extraction layer may use a structured-output model when it is explicitly enabled, but it has a narrow job: return the requested fields from the supplied sources, or return `Unknown`.
+
+```python
+"Use Unknown when the evidence does not explicitly support a field. "
+"Never infer, estimate, or use outside knowledge. "
+"Every non-Unknown value needs an exact quote, URL, and source title "
+"from the supplied sources."
+```
+
+The prompt also treats retrieved web pages as untrusted reference data, never as instructions. That is a small but important prompt-injection boundary: a page that says "ignore earlier instructions" is a page to research, not an authority over the agent.
+
+When model extraction is disabled or unavailable, MarketLens uses a conservative keyword-and-sentence fallback. It may find less information, but it preserves the same output rule: no evidence means no claim.
 
 ---
 
