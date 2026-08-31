@@ -1,0 +1,167 @@
+---
+title: "Building MarketLens: An Evidence-First Competitor Research Agent for Apparel Sourcing"
+date: "2026-08-31"
+tags: ["AI Agents", "LangGraph", "LangChain", "Streamlit", "Tavily", "Mem0", "Pinecone", "LlamaIndex", "Python", "Responsible AI"]
+excerpt: "MarketLens is a LangGraph-powered research agent for apparel sourcing. It discovers competitors, collects public evidence, marks unsupported fields as Unknown, measures coverage, and asks for human approval before export."
+category: "ai"
+published: true
+---
+
+When a sourcing team needs to compare apparel suppliers, the first research pass is usually manual: search for companies, open websites, scan product pages, look for MOQs, materials, locations, certifications, and lead times, then paste whatever seems credible into a spreadsheet.
+
+That process is slow, inconsistent, and surprisingly easy to overstate. A supplier site may describe customization but never list pricing. A directory may claim a factory location without naming a source. And the absence of a certification on one page is not evidence that the supplier lacks it.
+
+I built **MarketLens AI** to make that first pass more structured and more honest. It is an evidence-first competitor research agent for Arra Global's apparel sourcing workflow. The app accepts a research brief, investigates public sources, creates a comparison table for three to ten candidates, and makes uncertainty visible instead of filling gaps with plausible-sounding text.
+
+The code is available at [github.com/nishokvg/market-lens-arra](https://github.com/nishokvg/market-lens-arra).
+
+---
+
+## The problem: competitor research is not a one-prompt task
+
+It would have been easy to build a chat interface that returns a list of suppliers and a polished recommendation. That is not the same thing as a reliable research workflow.
+
+For this project, a useful result needed to answer a stricter question:
+
+> Which fields can we support with public evidence, which fields remain unknown, and what should a human verify before using the result for outreach or a business decision?
+
+That changes the design. The system cannot treat every web snippet as fact, cannot infer commercial terms from a company's marketing copy, and cannot let a temporary provider failure collapse the entire research run.
+
+MarketLens therefore has three core principles:
+
+1. **Evidence before fluency.** A supported field should carry a source; an unsupported field is `Unknown`.
+2. **Coverage is visible.** The app reports how many requested comparison points have supporting evidence. That score is a completeness signal, not an accuracy percentage.
+3. **A human remains responsible.** The app prepares a draft research brief. A user reviews it and explicitly approves it before an export is prepared or approved context is stored in memory.
+
+---
+
+## The workflow: a stateful research graph
+
+MarketLens is built with **LangChain**, **LangGraph**, **Pydantic**, and **Streamlit**. LangGraph was a better fit than a single linear script because the research process has state, optional integrations, and several safe fallback paths.
+
+```text
+Streamlit brief
+  -> load context
+  -> discover competitors
+  -> collect public evidence
+  -> index available sources
+  -> extract comparable facts
+  -> analyze the comparison
+  -> review evidence and request approval
+```
+
+The shared research state carries the user brief, candidate companies, source snippets, extracted facts, comparison rows, evidence coverage, integration status, errors, and reviewer notes between stages.
+
+### The specialized roles
+
+The project brief called for discovery, research, extraction, and orchestration. I implemented those roles as focused LangGraph stages and tool-backed services rather than separate chat agents:
+
+| Role | Responsibility |
+|---|---|
+| Orchestrator | Coordinates the graph and preserves the shared state. |
+| Context specialist | Retrieves relevant approved history and indexed snippets when those optional integrations are configured. |
+| Discovery specialist | Finds candidates, removes duplicates, and respects the requested three-to-ten-company limit. |
+| Research specialist | Collects current public-web results for each candidate with bounded concurrency. |
+| Extraction specialist | Normalizes source-backed details into fields such as MOQ, materials, customization, location, lead time, pricing, and certifications. |
+| Reviewer | Calculates coverage, explains evidence gaps, and flags fields that require direct supplier verification. |
+| Human reviewer | Approves the draft before download preparation or an approved-memory write. |
+
+This separation makes the system easier to inspect. If discovery finds poor candidates, I can examine discovery. If a commercial detail is absent, I can see whether the problem is source collection or extraction. A one-shot answer makes those failures difficult to distinguish.
+
+---
+
+## The research stack, and what each layer actually does
+
+The app is deliberately designed so that an unavailable integration degrades capability rather than inventing an answer or crashing the workflow.
+
+| Tool or layer | Purpose | What it does not prove |
+|---|---|---|
+| **Tavily** | Finds live public-web results for discovery and competitor research. | That a web result is complete, current, contractual, or verified by the supplier. |
+| **LangChain tools** | Gives the workflow explicit discovery and research actions. | That tool output is automatically trustworthy. |
+| **LangGraph** | Coordinates state, stages, error handling, and visibility in the UI. | That orchestration alone improves factual accuracy. |
+| **Pydantic** | Constrains research data to a consistent structured schema. | That a valid schema means a claim is true. |
+| **Mem0** | Optionally remembers approved, user-scoped research context. | A source of truth for fresh market facts. It is only written after approval. |
+| **LlamaIndex + Pinecone** | Optionally index and retrieve source snippets from prior work. | A guarantee that retrieved text is current or sufficient evidence. |
+| **OpenRouter-compatible models** | Optionally perform structured fact extraction. | Permission to infer an unsupported commercial detail. |
+| **Streamlit** | Provides the intake, stage visibility, evidence review, and approval UI. | Authentication or enterprise security by itself. |
+
+One important implementation detail: the original course brief named You.com as its primary search API. The working build uses Tavily, a functionally similar public-web research provider, because that was the configured integration during development. I am documenting that substitution rather than claiming literal You.com implementation.
+
+---
+
+## Evidence coverage is not accuracy
+
+The most important number in MarketLens is the evidence coverage score. It answers:
+
+```text
+supported requested comparison points / all requested comparison points
+```
+
+If the user asks for eight fields across three competitors, there are 24 comparison points to support. If 21 are sourced, the app reports **88% coverage**. That does **not** mean the analysis is 88% accurate. It means evidence was found for 21 of the 24 requested fields.
+
+This distinction matters because public supplier information is often incomplete. Pricing, certifications, production capacity, lead times, and delivery terms may be unavailable or change by order. MarketLens intentionally returns `Unknown` for unsupported fields, displays a below-target warning when coverage is below 80%, and treats gaps as follow-up questions instead of conclusions.
+
+The included demo data shows this behavior clearly. It uses three labelled fictional suppliers so the workflow can be demonstrated without credentials or accidental claims about real companies. The demo supports 11 of 24 requested points, or 46% coverage. That low score is useful: it demonstrates that the system refuses to make weak evidence look complete.
+
+---
+
+## Reliability work: failures should be visible, not hidden
+
+The most useful test of an agent is not the happy path. It is what happens when a dependency is missing, a search returns nothing, or an extraction model is unavailable.
+
+MarketLens handles several of those cases explicitly:
+
+| Situation | Safe system behavior |
+|---|---|
+| No usable evidence for a field | Leaves the field as `Unknown`; does not guess. |
+| Tavily or another optional provider is unavailable | Records the integration state and continues with available safe fallbacks. |
+| Pinecone retrieval is unavailable | Continues without retrieval; the app does not falsely say an index was used. |
+| Coverage is below 80% | Displays a warning and recommends supplier follow-up. |
+| A user wants to export or retain approved context | Requires a visible approval checkbox first. |
+| A page contains instructions embedded in web content | Treats retrieved web text as data, not as instructions for the agent. |
+
+During Streamlit Community Cloud deployment, I also hit a very practical failure: the app could not import the local `market_lens` package. The project uses a `src/` layout, while Streamlit Cloud installs `requirements.txt` and does not automatically install the repository package. The fix was small but important: add `-e .` to `requirements.txt` so the cloud build installs the local package. The test suite still passed after the change: **16 tests passed**.
+
+That is a good reminder that a working local demo is not the same as a deployable application. Packaging is part of the product.
+
+---
+
+## Privacy, security, and ethical limits
+
+This is a course project and a research-assistance tool, not an autonomous purchasing system or a source of verified supplier claims.
+
+The live mode uses API credentials for search, optional model extraction, memory, and retrieval. Those values are kept in local environment files during development and in Streamlit secrets for deployment. They are not committed to the repository or included in screenshots, reports, or this article. A configurable access code can restrict use of a live instance that has paid-provider credentials.
+
+There are also boundaries on how the output should be used:
+
+- It should not be used as the final basis for supplier selection, contracting, pricing, or compliance claims.
+- A missing public certification is not proof that a supplier has no certification.
+- Web information can be stale, inaccurate, region-specific, or copied from an unreliable source.
+- Memory and vector retrieval help preserve useful context, but neither makes a claim more accurate than its underlying evidence.
+- A user should verify commercial terms directly with the supplier before outreach or a procurement decision.
+
+The goal is to reduce manual research effort while making uncertainty more visible, not to replace judgment with an authoritative-looking table.
+
+---
+
+## What I learned building it
+
+**Agentic quality is mostly control flow and state management.** The model prompt matters, but the more important engineering work is deciding what the system can do, what it must not do, what it remembers, and how it behaves when a tool fails.
+
+**Memory is not accuracy.** Mem0 and Pinecone are useful for carrying approved context and retrieving prior snippets. They do not turn incomplete public data into verified facts. Fresh sources and explicit evidence rules matter more.
+
+**A lower score can be the better outcome.** A 46% coverage report that says `Unknown` is more responsible than a 100% table made from unsupported inferences.
+
+**Scale is a product trade-off.** Researching ten companies creates more provider calls and more structured extraction work than a three-company demo. The UI exposes a bounded three-to-ten-company control so users can choose between speed, cost, and breadth.
+
+**Optional integrations should be optional in reality.** A memory service, vector database, model provider, or search provider should improve the workflow when configured, not become a single point of failure.
+
+---
+
+## What comes next
+
+The next meaningful improvement is not adding more model calls. It is strengthening source quality: domain reputation signals, source freshness, source-type labels, clearer citations per field, and a review queue for high-impact claims such as certifications and minimum order quantities.
+
+I would also add a You.com adapter if literal alignment with the original course specification is required, and I would run structured live-mode evaluation over a vetted set of real suppliers before representing the system as production-ready.
+
+For now, MarketLens demonstrates the principle I care about most in applied AI: a research agent should show its work, preserve uncertainty, and make the human decision-maker stronger rather than less accountable.

@@ -5,10 +5,27 @@
     <link>https://nishokvg.github.io</link>
     <description>Engineering blog covering SRE, AI/ML, Tamil literature, and cloud infrastructure by Nishok VG.</description>
     <language>en-us</language>
-    <lastBuildDate>Tue, 18 Aug 2026 01:35:17 GMT</lastBuildDate>
+    <lastBuildDate>Mon, 31 Aug 2026 23:18:13 GMT</lastBuildDate>
     <atom:link href="https://nishokvg.github.io/feed.xml" rel="self" type="application/rss+xml"/>
     <managingEditor>Nishok VG</managingEditor>
     <webMaster>Nishok VG</webMaster>
+  <item>
+    <title>Building MarketLens: An Evidence-First Competitor Research Agent for Apparel Sourcing</title>
+    <link>https://nishokvg.github.io/posts/building-marketlens-evidence-first-competitor-research/</link>
+    <guid isPermaLink="true">https://nishokvg.github.io/posts/building-marketlens-evidence-first-competitor-research/</guid>
+    <pubDate>Mon, 31 Aug 2026 00:00:00 GMT</pubDate>
+    <description>MarketLens is a LangGraph-powered research agent for apparel sourcing. It discovers competitors, collects public evidence, marks unsupported fields as Unknown, measures coverage, and asks for human approval before export.</description>
+    <category>AI Agents</category>
+    <category>LangGraph</category>
+    <category>LangChain</category>
+    <category>Streamlit</category>
+    <category>Tavily</category>
+    <category>Mem0</category>
+    <category>Pinecone</category>
+    <category>LlamaIndex</category>
+    <category>Python</category>
+    <category>Responsible AI</category>
+  </item>
   <item>
     <title>LifeLens — Turning a Date of Birth Into a Story About the World</title>
     <link>https://nishokvg.github.io/posts/lifelens-world-since-you-were-born/</link>
