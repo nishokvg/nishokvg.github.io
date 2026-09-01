@@ -7,7 +7,7 @@
     <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%"><feDropShadow dx="0" dy="5" stdDeviation="8" flood-color="#16415c" flood-opacity=".12"/></filter>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#547084"/></marker>
     <style>
-      .title{font:700 39px 'JetBrains Mono',monospace;fill:#fff}.subtitle{font:500 17px 'JetBrains Mono',monospace;fill:#d4eef0}.kicker{font:700 15px 'JetBrains Mono',monospace;letter-spacing:2px;fill:#3885a2}.h{font:700 23px 'JetBrains Mono',monospace;fill:#133c58}.sh{font:700 18px 'JetBrains Mono',monospace;fill:#173e59}.body{font:500 15px 'JetBrains Mono',monospace;fill:#40596a}.small{font:500 13px 'JetBrains Mono',monospace;fill:#526979}.num{font:700 18px 'JetBrains Mono',monospace;fill:#fff}.chip{font:700 13px 'JetBrains Mono',monospace;fill:#23475d}.tech{font:700 15px 'JetBrains Mono',monospace;fill:#1a3b50}.accent{font:700 16px 'JetBrains Mono',monospace;fill:#0d665f}.warn{font:700 16px 'JetBrains Mono',monospace;fill:#8b5f10}.gate{font:700 18px 'JetBrains Mono',monospace;fill:#8c421f}.line{stroke:#547084;stroke-width:2.6;fill:none;marker-end:url(#arrow)}
+      .title{font:700 39px 'JetBrains Mono',monospace;fill:#fff}.subtitle{font:500 17px 'JetBrains Mono',monospace;fill:#d4eef0}.kicker{font:700 15px 'JetBrains Mono',monospace;letter-spacing:2px;fill:#3885a2}.h{font:700 23px 'JetBrains Mono',monospace;fill:#133c58}.sh{font:700 18px 'JetBrains Mono',monospace;fill:#173e59}.body{font:500 15px 'JetBrains Mono',monospace;fill:#40596a}.small{font:500 13px 'JetBrains Mono',monospace;fill:#526979}.num{font:700 18px 'JetBrains Mono',monospace;fill:#fff}.chip{font:700 13px 'JetBrains Mono',monospace;fill:#23475d}.tech{font:700 15px 'JetBrains Mono',monospace;fill:#1a3b50}.tech-wide{font:700 10.5px 'JetBrains Mono',monospace;fill:#1a3b50}.badge{font:700 12px 'JetBrains Mono',monospace;fill:#23475d;letter-spacing:.7px}.mono{font:700 14px 'JetBrains Mono',monospace;fill:#fff}.accent{font:700 16px 'JetBrains Mono',monospace;fill:#0d665f}.warn{font:700 16px 'JetBrains Mono',monospace;fill:#8b5f10}.gate{font:700 18px 'JetBrains Mono',monospace;fill:#8c421f}.line{stroke:#547084;stroke-width:2.6;fill:none;marker-end:url(#arrow)}
     </style>
   </defs>
 
@@ -91,13 +91,21 @@
   <rect x="1265" y="165" width="300" height="735" rx="18" fill="#fff" stroke="#c8d9e3" stroke-width="2" filter="url(#shadow)"/>
   <text x="1292" y="210" class="kicker">OPTIONAL LAYERS</text>
   <rect x="1285" y="237" width="260" height="124" rx="13" fill="#edf7fb" stroke="#99bfd0" stroke-width="2"/>
-  <text x="1307" y="274" class="sh">Tavily</text><text x="1307" y="300" class="small">live discovery + public</text><text x="1307" y="321" class="small">competitor evidence</text>
+  <circle cx="1321" cy="289" r="23" fill="#1d7197"/><circle cx="1316" cy="284" r="8" fill="none" stroke="#fff" stroke-width="3"/><path d="M1322 290l8 8" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+  <rect x="1460" y="253" width="66" height="22" rx="11" fill="#d9edf5"/><text x="1493" y="269" class="badge" text-anchor="middle">OPTIONAL</text>
+  <text x="1358" y="287" class="sh">Tavily</text><text x="1358" y="313" class="small">live discovery + public</text><text x="1358" y="334" class="small">competitor evidence</text>
   <rect x="1285" y="383" width="260" height="124" rx="13" fill="#eef8f4" stroke="#a4ceb9" stroke-width="2"/>
-  <text x="1307" y="420" class="sh">Mem0</text><text x="1307" y="446" class="small">approved, user-scoped</text><text x="1307" y="467" class="small">research context</text>
+  <circle cx="1321" cy="435" r="23" fill="#18765e"/><ellipse cx="1321" cy="426" rx="10" ry="4" fill="none" stroke="#fff" stroke-width="2.5"/><path d="M1311 426v14c0 5 20 5 20 0v-14m-20 7c0 5 20 5 20 0" fill="none" stroke="#fff" stroke-width="2.5"/>
+  <rect x="1460" y="399" width="66" height="22" rx="11" fill="#d9f0e6"/><text x="1493" y="415" class="badge" text-anchor="middle">OPTIONAL</text>
+  <text x="1358" y="433" class="sh">Mem0</text><text x="1358" y="459" class="small">approved, user-scoped</text><text x="1358" y="480" class="small">research context</text>
   <rect x="1285" y="529" width="260" height="124" rx="13" fill="#f3f0fb" stroke="#c0b5da" stroke-width="2"/>
-  <text x="1307" y="566" class="sh">Pinecone + LlamaIndex</text><text x="1307" y="592" class="small">optional source indexing</text><text x="1307" y="613" class="small">and retrieval</text>
+  <circle cx="1321" cy="581" r="23" fill="#70519f"/><path d="M1310 588l11-15 11 15-22 0zm11-15v-9m-11 24v9m22-9v9" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="1321" cy="564" r="3.5" fill="#fff"/><circle cx="1310" cy="597" r="3.5" fill="#fff"/><circle cx="1332" cy="597" r="3.5" fill="#fff"/>
+  <rect x="1460" y="545" width="66" height="22" rx="11" fill="#e6e0f4"/><text x="1493" y="561" class="badge" text-anchor="middle">OPTIONAL</text>
+  <text x="1358" y="568" class="sh">Pinecone +</text><text x="1358" y="590" class="sh">LlamaIndex</text><text x="1358" y="617" class="small">source indexing</text><text x="1358" y="638" class="small">and retrieval</text>
   <rect x="1285" y="675" width="260" height="164" rx="13" fill="#fff7e3" stroke="#e3c680" stroke-width="2"/>
-  <text x="1307" y="712" class="sh">Model extraction</text><text x="1307" y="738" class="small">OpenAI-compatible</text><text x="1307" y="759" class="small">structured output only</text><text x="1307" y="792" class="warn">Never infer facts.</text><text x="1307" y="815" class="warn">Every claim needs evidence.</text>
+  <circle cx="1321" cy="727" r="23" fill="#a67018"/><path d="M1319 714c-6 0-7 6-4 9-3 3-2 9 4 9m4-18c6 0 7 6 4 9 3 3 2 9-4 9" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/><path d="M1332 711v8m-4-4h8" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+  <rect x="1462" y="691" width="64" height="22" rx="11" fill="#f9e4b4"/><text x="1494" y="707" class="badge" text-anchor="middle">ON DEMAND</text>
+  <text x="1358" y="725" class="sh">Model extraction</text><text x="1358" y="751" class="small">OpenAI-compatible</text><text x="1358" y="772" class="small">structured output only</text><text x="1307" y="807" class="warn">Never infer facts. Cite claims.</text>
 
   <!-- handoff & human gate -->
   <path d="M910 778V928" class="line"/>
@@ -116,13 +124,13 @@
   <rect x="35" y="1080" width="1530" height="82" rx="16" fill="#fff" stroke="#c8d9e3" stroke-width="2"/>
   <text x="65" y="1129" class="kicker">TECH STACK</text>
   <g>
-    <rect x="245" y="1100" width="130" height="40" rx="10" fill="#eef4f7"/><text x="310" y="1126" class="tech" text-anchor="middle">Python</text>
-    <rect x="392" y="1100" width="145" height="40" rx="10" fill="#eef4f7"/><text x="465" y="1126" class="tech" text-anchor="middle">Streamlit</text>
-    <rect x="554" y="1100" width="150" height="40" rx="10" fill="#eef4f7"/><text x="629" y="1126" class="tech" text-anchor="middle">LangGraph</text>
-    <rect x="721" y="1100" width="155" height="40" rx="10" fill="#eef4f7"/><text x="798" y="1126" class="tech" text-anchor="middle">LangChain</text>
-    <rect x="893" y="1100" width="130" height="40" rx="10" fill="#eef4f7"/><text x="958" y="1126" class="tech" text-anchor="middle">Tavily</text>
-    <rect x="1040" y="1100" width="130" height="40" rx="10" fill="#eef4f7"/><text x="1105" y="1126" class="tech" text-anchor="middle">Pydantic</text>
-    <rect x="1187" y="1100" width="110" height="40" rx="10" fill="#eef4f7"/><text x="1242" y="1126" class="tech" text-anchor="middle">Mem0</text>
-    <rect x="1314" y="1100" width="210" height="40" rx="10" fill="#eef4f7"/><text x="1419" y="1126" class="tech" text-anchor="middle">Pinecone + LlamaIndex</text>
+    <rect x="245" y="1100" width="130" height="40" rx="10" fill="#eef4f7"/><circle cx="266" cy="1120" r="13" fill="#3776ab"/><text x="266" y="1125" class="mono" text-anchor="middle">Py</text><text x="320" y="1126" class="tech" text-anchor="middle">Python</text>
+    <rect x="392" y="1100" width="145" height="40" rx="10" fill="#eef4f7"/><circle cx="413" cy="1120" r="13" fill="#f4515f"/><text x="413" y="1125" class="mono" text-anchor="middle">S</text><text x="473" y="1126" class="tech" text-anchor="middle">Streamlit</text>
+    <rect x="554" y="1100" width="150" height="40" rx="10" fill="#eef4f7"/><circle cx="575" cy="1120" r="13" fill="#1976a3"/><text x="575" y="1125" class="mono" text-anchor="middle">LG</text><text x="645" y="1126" class="tech" text-anchor="middle">LangGraph</text>
+    <rect x="721" y="1100" width="155" height="40" rx="10" fill="#eef4f7"/><circle cx="742" cy="1120" r="13" fill="#2d7c70"/><text x="742" y="1125" class="mono" text-anchor="middle">LC</text><text x="812" y="1126" class="tech" text-anchor="middle">LangChain</text>
+    <rect x="893" y="1100" width="130" height="40" rx="10" fill="#eef4f7"/><circle cx="914" cy="1120" r="13" fill="#1d7197"/><text x="914" y="1125" class="mono" text-anchor="middle">T</text><text x="970" y="1126" class="tech" text-anchor="middle">Tavily</text>
+    <rect x="1040" y="1100" width="130" height="40" rx="10" fill="#eef4f7"/><circle cx="1061" cy="1120" r="13" fill="#a67018"/><text x="1061" y="1125" class="mono" text-anchor="middle">P</text><text x="1117" y="1126" class="tech" text-anchor="middle">Pydantic</text>
+    <rect x="1187" y="1100" width="110" height="40" rx="10" fill="#eef4f7"/><circle cx="1208" cy="1120" r="13" fill="#18765e"/><text x="1208" y="1125" class="mono" text-anchor="middle">M</text><text x="1254" y="1126" class="tech" text-anchor="middle">Mem0</text>
+    <rect x="1314" y="1100" width="210" height="40" rx="10" fill="#eef4f7"/><circle cx="1335" cy="1120" r="13" fill="#70519f"/><text x="1335" y="1125" class="mono" text-anchor="middle">V</text><text x="1434" y="1124" class="tech-wide" text-anchor="middle">Pinecone + LlamaIndex</text>
   </g>
 </svg>
