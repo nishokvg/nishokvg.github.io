@@ -1,54 +1,27 @@
-Week 4 project complete from The Gen Academy's Mastering Agentic AI cohort 🎓
+Can a RAG system retrieve better and still not become a better product? 🤔
 
-I built and evaluated a source-grounded Tamil Agentic GraphRAG across 10 literary works. 📚
+For my Week 4 project at The Gen Academy, I evaluated a source-grounded Tamil Agentic GraphRAG across 10 literary works. 📚
 
-But the most important result was not that retrieval improved from 74% to 84%.
+The system covers 61 PDFs, 10,416 pages, and 21,746 canonical evidence records. Its LangGraph workflow combines hybrid retrieval, dynamic tools, graph traversal, generation, and strict citation validation.
 
-It was discovering why that improvement was still not enough.
+I tested it with 100 frozen Tamil questions using deterministic checks, Ragas, a Tamil LLM judge, human review, and 200 LangSmith traces.
 
-The system works only from its repository corpus:
-
-📚 10 Tamil literary works
-📄 61 source PDFs and 10,416 pages
-🧾 21,746 canonical evidence records
-🕸️ A provenance-backed knowledge graph
-🧠 A LangGraph agent with dynamic top-k tool selection
-🛡️ Page, source-ID, and quotation validation before an answer is accepted
-
-The end-to-end flow:
-
-PDFs → decoding/OCR → canonical evidence → BM25 + vectors + RRF → Cohere reranking → graph traversal → answer generation → citation validation → answer or abstain
-
-For evaluation, I froze 100 Tamil questions across all 10 works and combined:
-
-🧪 Deterministic evaluators
-📊 Ragas metrics
-⚖️ A structured Tamil LLM judge
-👤 Human reference review and judge calibration
-🔎 LangSmith traces for 200 paid runs
-
-The final comparison:
+The results:
 
 ✅ Recall@8: 74% → 84%
 ⚡ p95 latency: 123.7s → 61.5s
 ⚠️ False refusals: still 60%
-⚠️ Citation fidelity: still about 42%
 📉 Strict passes: 29 → 26
 
-The trace-level finding was even more useful: in 37 final cases, the agent retrieved every labeled evidence record and still refused to answer.
+The key finding: in 37 cases, the agent retrieved every labeled source and still refused to answer.
 
-That moved the next engineering decision downstream. The immediate bottleneck is not retrieval alone. It is the path from generation to citation validation: faithful quote copying, source-ID handling, context construction, retry, and abstention.
+🎯 My takeaway: a retrieval win is not automatically a product win. Good evaluation should reveal the next bottleneck, not just produce a higher score.
 
-My biggest takeaway from this week:
+Next: repair the generation → citation-validation path.
 
-🎯 A retrieval win is not automatically a product win.
+Thanks to Aishwarya Srinivasan and Arvind Narayanamurthy for pushing us to learn by building. 🙏
 
-Good evaluation should not simply produce a higher score. It should show where the system fails, keep the claims honest, and tell us what to build next.
-
-A big thanks to Aishwarya Srinivasan and Arvind Narayanamurthy for making these concepts practical and pushing us to learn by building. 🙏
-
-🔗 Technical deep dive: https://nishokvg.github.io/posts/evaluating-tamil-agentic-graphrag/
-
+🔗 Article: https://nishokvg.github.io/posts/evaluating-tamil-agentic-graphrag/
 💻 GitHub: https://github.com/nishokvg/tamil-rag
 
-#AgenticAI #AIEngineering #GraphRAG #RAG #LangGraph #LangSmith #Ragas #LLMEvaluation #Tamil #ResponsibleAI #BuildInPublic #TheGenAcademy
+#AgenticAI #GraphRAG #LangGraph #LangSmith #Ragas #LLMEvaluation #Tamil #AIEngineering
