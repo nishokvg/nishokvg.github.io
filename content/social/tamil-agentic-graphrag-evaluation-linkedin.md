@@ -1,35 +1,54 @@
-Retrieval improved from 74% to 84%.
+Week 4 project complete from The Gen Academy's Mastering Agentic AI cohort 🎓
 
-But I could not honestly say my RAG system had become better.
+I built and evaluated a source-grounded Tamil Agentic GraphRAG across 10 literary works. 📚
 
-I recently completed a full evaluation of a source-grounded Tamil Agentic GraphRAG system covering:
+But the most important result was not that retrieval improved from 74% to 84%.
 
-- 10 Tamil literary works
-- 61 source PDFs and 10,416 pages
-- 21,746 canonical evidence records
-- 100 frozen Tamil evaluation questions
-- 200 verified paid LangSmith traces
+It was discovering why that improvement was still not enough.
 
-The evaluation combined deterministic checks, Ragas, a structured Tamil LLM judge, partial human calibration, and LangSmith observability.
+The system works only from its repository corpus:
 
-The final configuration improved Recall@8 from 74% to 84% and reduced p95 latency from 123.7 seconds to 61.5 seconds.
+📚 10 Tamil literary works
+📄 61 source PDFs and 10,416 pages
+🧾 21,746 canonical evidence records
+🕸️ A provenance-backed knowledge graph
+🧠 A LangGraph agent with dynamic top-k tool selection
+🛡️ Page, source-ID, and quotation validation before an answer is accepted
 
-But false refusals remained at 60%. Citation fidelity remained near 42%. Strict passes fell from 29 to 26.
+The end-to-end flow:
 
-The most useful finding came from the traces: in 37 final cases, the agent retrieved every labeled evidence record and still refused to answer.
+PDFs → decoding/OCR → canonical evidence → BM25 + vectors + RRF → Cohere reranking → graph traversal → answer generation → citation validation → answer or abstain
 
-That moved the next engineering decision downstream. The immediate problem is no longer retrieval alone. It is the path from generation to citation validation: quote copying, source-ID handling, context construction, retry, and abstention.
+For evaluation, I froze 100 Tamil questions across all 10 works and combined:
 
-I also isolated Cohere reranking in a healthy retrieval-only experiment. Recall improved from 68.7% to 84.0%, confirming that reranking helps retrieval on this dataset. It still does not prove better end-to-end answers.
+🧪 Deterministic evaluators
+📊 Ragas metrics
+⚖️ A structured Tamil LLM judge
+👤 Human reference review and judge calibration
+🔎 LangSmith traces for 200 paid runs
 
-My biggest lesson from this project:
+The final comparison:
 
-A retrieval win is not automatically a product win.
+✅ Recall@8: 74% → 84%
+⚡ p95 latency: 123.7s → 61.5s
+⚠️ False refusals: still 60%
+⚠️ Citation fidelity: still about 42%
+📉 Strict passes: 29 → 26
 
-Good evaluation should not merely produce a higher score. It should expose where the system fails, preserve uncertainty, and tell us what to build next.
+The trace-level finding was even more useful: in 37 final cases, the agent retrieved every labeled evidence record and still refused to answer.
 
-Technical article: https://nishokvg.github.io/posts/evaluating-tamil-agentic-graphrag/
+That moved the next engineering decision downstream. The immediate bottleneck is not retrieval alone. It is the path from generation to citation validation: faithful quote copying, source-ID handling, context construction, retry, and abstention.
 
-GitHub: https://github.com/nishokvg/tamil-rag
+My biggest takeaway from this week:
 
-#AgenticAI #GraphRAG #RAG #LangGraph #LangSmith #Ragas #LLMEvaluation #Tamil #AIEngineering #ResponsibleAI
+🎯 A retrieval win is not automatically a product win.
+
+Good evaluation should not simply produce a higher score. It should show where the system fails, keep the claims honest, and tell us what to build next.
+
+A big thanks to Aishwarya Srinivasan and Arvind Narayanamurthy for making these concepts practical and pushing us to learn by building. 🙏
+
+🔗 Technical deep dive: https://nishokvg.github.io/posts/evaluating-tamil-agentic-graphrag/
+
+💻 GitHub: https://github.com/nishokvg/tamil-rag
+
+#AgenticAI #AIEngineering #GraphRAG #RAG #LangGraph #LangSmith #Ragas #LLMEvaluation #Tamil #ResponsibleAI #BuildInPublic #TheGenAcademy

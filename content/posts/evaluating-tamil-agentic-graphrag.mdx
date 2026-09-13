@@ -19,7 +19,7 @@ This article explains how I evaluated a source-grounded Tamil Agentic GraphRAG a
 
 The implementation and reproducible evidence are available at [github.com/nishokvg/tamil-rag](https://github.com/nishokvg/tamil-rag).
 
-![Tamil Agentic GraphRAG evaluation: 10 literary works, 61 source PDFs, 100 frozen cases, and Recall@8 improving from 74% to 84%](/tamil-agentic-graphrag-evaluation.jpg)
+![Tamil Agentic GraphRAG architecture: corpus ingestion, canonical evidence, hybrid retrieval, agent orchestration, citation validation, and evaluation results](/tamil-agentic-graphrag-architecture.png)
 
 ---
 
@@ -336,4 +336,3 @@ The next iteration should hold the frozen dataset and retrieval configuration co
 The most valuable outcome of this evaluation is not the 84% retrieval score. It is a narrower engineering decision backed by evidence: **retrieval is no longer the only or even the primary bottleneck for many failures. Generation and citation handling are next.**
 
 That is what a useful evaluation should do. It should not merely grade the system. It should tell us what to build next.
-
