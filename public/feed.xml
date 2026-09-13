@@ -5,10 +5,26 @@
     <link>https://nishokvg.github.io</link>
     <description>Engineering blog covering SRE, AI/ML, Tamil literature, and cloud infrastructure by Nishok VG.</description>
     <language>en-us</language>
-    <lastBuildDate>Tue, 01 Sep 2026 03:27:35 GMT</lastBuildDate>
+    <lastBuildDate>Sun, 13 Sep 2026 05:12:46 GMT</lastBuildDate>
     <atom:link href="https://nishokvg.github.io/feed.xml" rel="self" type="application/rss+xml"/>
     <managingEditor>Nishok VG</managingEditor>
     <webMaster>Nishok VG</webMaster>
+  <item>
+    <title>Evaluating a 10-Work Tamil Agentic GraphRAG: When Better Retrieval Did Not Mean Better Answers</title>
+    <link>https://nishokvg.github.io/posts/evaluating-tamil-agentic-graphrag/</link>
+    <guid isPermaLink="true">https://nishokvg.github.io/posts/evaluating-tamil-agentic-graphrag/</guid>
+    <pubDate>Sat, 12 Sep 2026 00:00:00 GMT</pubDate>
+    <description>I evaluated a source-grounded Tamil Agentic GraphRAG across 10 literary works and 100 frozen questions. Recall improved from 74% to 84%, but answer quality did not. Here is what the evaluation exposed.</description>
+    <category>Agentic RAG</category>
+    <category>GraphRAG</category>
+    <category>LangGraph</category>
+    <category>LangSmith</category>
+    <category>Ragas</category>
+    <category>LLM Evaluation</category>
+    <category>Tamil</category>
+    <category>Python</category>
+    <category>Responsible AI</category>
+  </item>
   <item>
     <title>Building MarketLens: An Evidence-First Competitor Research Agent for Apparel Sourcing</title>
     <link>https://nishokvg.github.io/posts/building-marketlens-evidence-first-competitor-research/</link>

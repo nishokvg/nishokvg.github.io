@@ -1,0 +1,339 @@
+---
+title: "Evaluating a 10-Work Tamil Agentic GraphRAG: When Better Retrieval Did Not Mean Better Answers"
+date: "2026-09-12"
+tags: ["Agentic RAG", "GraphRAG", "LangGraph", "LangSmith", "Ragas", "LLM Evaluation", "Tamil", "Python", "Responsible AI"]
+excerpt: "I evaluated a source-grounded Tamil Agentic GraphRAG across 10 literary works and 100 frozen questions. Recall improved from 74% to 84%, but answer quality did not. Here is what the evaluation exposed."
+category: "ai"
+published: true
+---
+
+I improved retrieval from **74% to 84%** and cut p95 latency from **123.7 seconds to 61.5 seconds**.
+
+But I could not honestly say the RAG system had become better.
+
+False refusals stayed at 60%. Citation fidelity stayed near 42%. Strict case passes fell from 29 to 26. In 37 final cases, the agent retrieved every labeled evidence record and still refused to answer.
+
+That result changed the project from an optimization exercise into an evaluation-engineering lesson: **a better retriever does not automatically produce a better RAG system**.
+
+This article explains how I evaluated a source-grounded Tamil Agentic GraphRAG across ten literary works, what the metrics revealed, which improvements survived testing, and why the next bottleneck is generation and citation validation rather than retrieval.
+
+The implementation and reproducible evidence are available at [github.com/nishokvg/tamil-rag](https://github.com/nishokvg/tamil-rag).
+
+![Tamil Agentic GraphRAG evaluation: 10 literary works, 61 source PDFs, 100 frozen cases, and Recall@8 improving from 74% to 84%](/tamil-agentic-graphrag-evaluation.jpg)
+
+---
+
+## From one Tamil epic to ten literary works
+
+Earlier versions of this project focused on Villi Bharatam and Tirukkural. I documented the original OCR and retrieval work in [Building RAG on a 2177-Page Tamil Epic](/posts/building-rag-on-tamil-epic/), the move to LangGraph and reranking in [From Manual RAG to LangGraph + Cohere + RAGAS](/posts/langgraph-rag-cohere-ragas/), and the deployment lessons in [Shipping Villi Bharatam RAG Live](/posts/shipping-villi-bharatam-rag-live/).
+
+The current system is a different scope. It covers ten registered works:
+
+1. Villi Bharatam
+2. Kamba Ramayanam
+3. Silappathikaram
+4. Manimekalai
+5. Civaka Cintamani
+6. Periyapuranam
+7. Tirukkural with Parimelazhagar commentary
+8. Akananuru
+9. Purananuru
+10. Tirumantiram
+
+The repository contains **61 checksum-verified PDFs**, **10,416 pages**, and **21,746 canonical evidence records**. Runtime literary knowledge is restricted to those PDFs. Every canonical record carries a work ID, source file, one-based page number, source hash, extraction method, decoder version, quality fields, and deterministic record ID.
+
+The rule is simple:
+
+> Return a supported Tamil answer with a resolvable source, page, and faithful quotation, or refuse when the repository corpus cannot support the answer.
+
+That rule is stricter than ordinary semantic search. It requires the whole path from ingestion to the final claim to preserve provenance.
+
+---
+
+## The architecture under evaluation
+
+The source corpus and generated indexes are bound to a deterministic build ID. Legacy processed artifacts remain in the repository for audit history, but they are excluded from the active ten-work path.
+
+```text
+61 raw PDFs + works manifest + SHA-256 checksums
+                         |
+                         v
+encoding classifier -> decoder/OCR -> canonical page evidence
+                         |
+          +--------------+---------------+
+          |              |               |
+          v              v               v
+       BM25         local vectors    evidence graph
+          |              |               |
+          +--------- hybrid RRF ----------+
+                         |
+                         v
+             query-conditioned tool loadout
+                         |
+                         v
+LangGraph: select -> decompose -> retrieve -> traverse
+           -> generate -> validate -> retry or abstain
+```
+
+The evidence graph and LangGraph serve different purposes. The evidence graph stores source-backed structure, candidate entities, relationships, co-occurrence, and provenance. LangGraph controls the execution of one question: routing, tool selection, decomposition, retrieval, graph traversal, generation, citation validation, retry, and refusal.
+
+The agent does not put every available tool into every model prompt. It scores tool descriptions against the question and retrieves a top-k loadout. Per-work hybrid search, cross-work comparison, exact Tamil search, and graph traversal are selectable. Source reading and citation validation are always pinned as safety tools.
+
+```python
+tools = select_tools(
+    state["question"],
+    top_k=state.get("tool_top_k", 4),
+    allowed_works=allowed,
+)
+```
+
+This matters because tool selection is part of the system being evaluated. A correct answer reached through an unnecessarily broad and expensive trajectory is different from the same answer reached through an appropriate work-scoped tool.
+
+One important boundary: the repository-local vector backend is a deterministic Tamil feature-hash approximation. It is labeled `local_hash_fuzzy` in traces, not presented as a provider semantic embedding model. Provider embeddings are optional and corpus-build-bound.
+
+The graph also has a deliberate limitation. Person, Place, Event, Theme, Concept, Motif, and LiteraryDevice nodes are heuristic candidates grounded in source records. They are retrieval aids, not a human-curated literary ontology.
+
+---
+
+## Freezing the evaluation before improving the system
+
+The first evaluation decision was methodological: record a baseline before changing retrieval, prompts, gates, or tool selection.
+
+I created a fixed dataset of **100 Tamil questions**, exactly ten primary cases per work. The file and scorer were hashed, and the same dataset was reused for baseline and final experiments.
+
+| Scenario | Cases | Purpose |
+|---|---:|---|
+| Happy path | 50 | Common answerable requests |
+| Edge case | 30 | Ambiguity, filters, multi-chunk evidence, and comparisons |
+| Known failure challenge | 15 | Behaviors already suspected to be weak |
+| Adversarial | 5 | Unsupported or manipulative requests |
+| **Total** | **100** | **75 answerable and 25 expected refusals** |
+
+Each case includes the question, expected behavior, primary work, category, source record IDs, PDF paths, pages, quote spans, required answer points, and expected tools where those labels are supportable.
+
+Ten cases per work create a coverage floor. They do not make the works equally complex. Villi Bharatam is much larger and noisier than Tirukkural, and Tirukkural has richer verse-level structure than several page-derived works.
+
+The dataset also has a serious representativeness limitation: the 100 cases reuse only **20 distinct gold records**, and 50 of the 75 answerable questions contain quotation cues. Human review approved 69 references; 31 remain unreviewed. The dataset is useful for controlled regression testing, but it is not proof of broad Tamil literary competence.
+
+That limitation belongs in the result, not in a footnote hidden after the conclusion.
+
+---
+
+## A layered evaluation stack
+
+No single metric can evaluate retrieval, grounding, language quality, refusal behavior, tool use, and operational performance. I used five complementary layers.
+
+| Layer | What it measures | Why it is needed |
+|---|---|---|
+| Deterministic evaluators | Recall@8, source presence, citation fidelity, refusal behavior, required-point coverage | Reproducible checks against explicit labels |
+| Ragas | Context precision, context recall, faithfulness, answer relevancy | Model-assisted RAG quality for eligible semantic cases |
+| Structured Tamil judge | Correctness, clarity, completeness, groundedness, refusal appropriateness | Tamil answer quality that literal checks cannot capture |
+| Human review | Reference approval and judge calibration | Detects judge disagreement and weak gold labels |
+| LangSmith traces | Selected tools, retrieved chunks, graph paths, latency, model metadata, outputs, and scores | Explains why a case passed or failed |
+
+### Category-aware metrics
+
+I did not apply every metric to every row.
+
+Ragas ran only on 40 eligible answerable semantic, synthesis, and comparison cases per configuration. Exact-lookup and unanswerable cases were evaluated with deterministic checks designed for those behaviors. A refusal should not receive a fabricated answer-relevancy score, and a missing provider result should not silently become zero.
+
+Unavailable or inapplicable measurements are stored as `not_executed` with a reason. That sounds like a small implementation detail, but it prevents missing evaluation coverage from turning into a misleading metric.
+
+### Deterministic pass bars
+
+The main acceptance bars were declared before the baseline:
+
+| Metric | Target |
+|---|---:|
+| Evidence Recall@8 | at least 80% |
+| Citation quote fidelity | at least 99% |
+| Correct refusal | at least 95% |
+| False refusal | at most 10% |
+| Required answer-point coverage | at least 80% |
+| Live p95 latency | at most 90 seconds |
+| Mean total cost | at most $0.10 per case |
+
+The total-cost bar remained unscored because embedding, reranking, timed-out calls without returned usage, and LangSmith account charges were not fully reconciled. Reporting the known chat subtotal as total cost would have been false precision.
+
+### The Tamil judge
+
+The judge returned structured scores from one to five, pass/fail decisions, short reasoning, and failure categories for focused dimensions. It did not receive an invitation to produce a vague "overall quality" opinion.
+
+The same model family generated and judged answers, which creates correlated-error risk. Human calibration covered 12 of the planned 15 answers, producing 60 dimension labels. That is enough to expose disagreements, but not enough to claim a fully calibrated judge.
+
+---
+
+## What the paid baseline showed
+
+The paid baseline generated answers for all 100 cases and recorded traces and evaluator outputs. It immediately showed that retrieval was only one part of the problem.
+
+| Metric | Baseline |
+|---|---:|
+| Recall@8, 75 answerable cases | 74.0% |
+| Minimum per-work recall | 42.9% |
+| Citation fidelity | 41.6% |
+| False refusal | 60.0% |
+| Correct refusal | 92.0% |
+| Required-point coverage | 11.1% |
+| p95 latency | 123.7 s |
+| Strict deterministic passes | 29/100 |
+
+The most frequent diagnostics were extra calls beyond the draft expected tool set, provider failures, and overbroad work selection. These clusters overlap, and the expected tool sets are minimum draft labels, so an extra tool call is a diagnostic rather than automatic proof of waste.
+
+Both paid agentic runs also experienced Cohere reranker outages and used the documented fallback. That provider condition limits causal claims about baseline-to-final changes.
+
+---
+
+## Four controlled improvement experiments
+
+Instead of changing the entire stack, I tested four narrow hypotheses against the frozen data.
+
+| Change | Targeted failure | Local evidence | Decision |
+|---|---|---|---|
+| Explicit work scope | Overbroad retrieval | Recall +15.3 percentage points; graph support +60 points | Retain |
+| One-tool loadout | Excess tool calls | Similar recall and lower latency, but comparison scope was lost | Reject |
+| Quoted-anchor gate | Refusals on explicit source-copy requests | Recall +5.3 points; false refusal -26.7 points | Retain |
+| Relationship normalization | Weak Tamil graph routing | Graph support +40 points; false refusal -12 points | Retain |
+
+The one-tool experiment is an important negative result. It made the trajectory smaller and faster, but it removed evidence needed for comparison questions. Optimization that changes the task is not optimization.
+
+The selected final configuration retained work scoping, the quotation gate, and relationship normalization while restoring the original four-tool loadout.
+
+---
+
+## The headline result: retrieval improved, answers did not
+
+| Metric | Baseline | Final | Change |
+|---|---:|---:|---:|
+| Recall@8 | 74.0% | **84.0%** | +10.0 points |
+| Minimum per-work recall | 42.9% | **68.8%** | +25.9 points |
+| Citation fidelity | 41.6% | 41.6% | no change |
+| False refusal | 60.0% | 60.0% | no change |
+| Correct refusal | 92.0% | 92.0% | no change |
+| Required-point coverage | 11.1% | **5.1%** | -6.0 points |
+| p95 latency | 123.7 s | **61.5 s** | -62.3 s |
+| Strict passes | 29/100 | **26/100** | -3 cases |
+
+Recall and latency crossed their declared bars. Citation fidelity, refusal behavior, and answer-point coverage did not.
+
+Ragas told a similarly mixed story:
+
+| Ragas metric, 40 eligible cases per run | Baseline | Final |
+|---|---:|---:|
+| Context precision | 0.8737 | 0.9211 |
+| Context recall | 0.9596 | 0.9450 |
+| Faithfulness | 0.2250 | 0.3000 |
+| Answer relevancy | 0.1462 | 0.1178 |
+
+The final configuration is therefore an evaluated candidate, not a validated answer-quality improvement.
+
+That wording matters. If I reported only Recall@8 and latency, the project would look successful. If I reported only strict passes, it would look like a regression. The full evaluation shows where the gain occurred and where it failed to propagate.
+
+---
+
+## Reranking was still the strongest retrieval lever
+
+Because both full paid runs encountered Cohere outages, I isolated reranking in a separate retrieval-only experiment. Cases were spaced seven seconds apart, and all 100 Cohere calls completed successfully.
+
+| Same hybrid cases | Reranking disabled | Healthy Cohere | Change |
+|---|---:|---:|---:|
+| Recall@8 | 68.7% | **84.0%** | +15.3 points |
+| Precision@8 | 10.8% | **13.5%** | +2.7 points |
+| MRR | 0.6282 | **0.7708** | +0.1426 |
+| p95 retrieval latency | 77.2 ms | 827.0 ms | +749.8 ms |
+
+This establishes a retrieval benefit on this dataset. It does **not** establish end-to-end answer quality with healthy reranking.
+
+It also exposed uneven gains. Quote-assisted cases improved much more than unquoted questions. The system became better at finding passages when the question already contained source wording, but only modestly better at broader semantic discovery.
+
+That is useful progress, but it is narrower than "the model understands ten Tamil classics."
+
+---
+
+## The failure moved downstream
+
+The most actionable finding was not a score. It was a trace pattern.
+
+In **37 final cases**, the agent retrieved every labeled evidence record and still refused. One Tirukkural case reached the correct source evidence in both runs but ended with a citation-rejection refusal.
+
+That narrows the next investigation:
+
+```text
+retrieval succeeds
+    -> model receives context
+    -> answer or quotation is generated
+    -> source ID / quote validation fails
+    -> bounded retry does not repair it
+    -> system abstains
+```
+
+The citation validator is doing an important job. Weakening it until the outputs pass would improve a dashboard while damaging the product. The better next experiment is to inspect the pre-validation model response, verify source-ID handling, test exact quote copying, and improve context construction while preserving the grounding rule.
+
+This is where traces add value. Aggregate metrics say that false refusal is high. A complete trajectory shows whether the missing answer began with routing, retrieval, generation, or validation.
+
+---
+
+## Observability is not the same as evaluation
+
+LangSmith contains 100 dataset examples and 200 verified paid root traces. The saved readback matches local answers and evaluator payloads, and representative runs include nested routing, retrieval, reranking, graph, generation, validation, retry, and abstention stages.
+
+That is useful observability, but it does not make every LangSmith feature complete. The historical uploader recorded stage and tool children, not native `llm` spans containing each prompt, raw response, and per-call token usage. A native experiment Comparison view was also not demonstrated; the repository provides a paired CSV instead.
+
+The distinction is important:
+
+- **Evaluation** assigns a score or decision to system behavior.
+- **Observability** exposes what happened inside a run.
+- **Monitoring** watches production behavior over time and alerts on thresholds.
+
+The project implements the first two substantially and defines future monitoring thresholds. It does not claim that having traces is the same as operating a production monitoring system.
+
+---
+
+## Cost: record what is known, label what is not
+
+The recorded chat usage for generation and evaluators was:
+
+| Paid run | Input tokens | Output tokens | Estimated chat cost |
+|---|---:|---:|---:|
+| Baseline | 4,269,952 | 211,493 | $0.767389 |
+| Final | 3,305,590 | 201,148 | $0.616527 |
+| **Combined** | **7,575,542** | **412,641** | **$1.383916** |
+
+This is a historical estimate using the recorded run rates. It excludes unpriced embeddings, Cohere usage, LangSmith account charges, and timed-out calls that returned no usage. The honest total is unknown.
+
+The API expense was manageable. The expensive part was creating, tracing, reviewing, and interpreting a dataset that could distinguish a retrieval gain from an answer-system gain.
+
+---
+
+## What I learned
+
+**A retrieval win is not a product win.** Recall@8 improved, but the user still received too many refusals and too few complete grounded answers.
+
+**Evaluation needs layers.** Deterministic checks, Ragas, a focused Tamil judge, human review, and traces answer different questions. Replacing all of them with one aggregate score would hide the failure location.
+
+**Apply metrics only where they make sense.** Exact lookup, semantic synthesis, comparison, and unanswerable questions need different evaluators.
+
+**Keep missing measurements missing.** `not_executed` with a reason is better than zero, and unknown total cost is better than a precise but incomplete number.
+
+**Provider health is an experimental variable.** The paid comparison happened under reranker outages. The healthy reranking ablation therefore remains separate from the end-to-end agent conclusion.
+
+**Human review changes the strength of the claim.** Sixty-nine approved references and 12 calibrated answers are evidence. They are not complete coverage.
+
+**Do not optimize away safety.** Citation validation is causing refusals, but weakening it would convert detectable failures into unsupported answers.
+
+---
+
+## The next experiment
+
+The next iteration should hold the frozen dataset and retrieval configuration constant and change only the generation-to-citation path:
+
+1. Capture the exact pre-validation model response and source identifiers.
+2. Test whether constrained quote copying improves citation acceptance.
+3. Separate answer prose from machine-generated citation objects.
+4. Rerun under stable reranker availability.
+5. Expand human-reviewed evidence breadth before making corpus-wide claims.
+
+The most valuable outcome of this evaluation is not the 84% retrieval score. It is a narrower engineering decision backed by evidence: **retrieval is no longer the only or even the primary bottleneck for many failures. Generation and citation handling are next.**
+
+That is what a useful evaluation should do. It should not merely grade the system. It should tell us what to build next.
+
