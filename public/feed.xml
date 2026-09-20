@@ -5,10 +5,24 @@
     <link>https://nishokvg.github.io</link>
     <description>Engineering blog covering SRE, AI/ML, Tamil literature, and cloud infrastructure by Nishok VG.</description>
     <language>en-us</language>
-    <lastBuildDate>Sun, 13 Sep 2026 05:29:14 GMT</lastBuildDate>
+    <lastBuildDate>Sun, 20 Sep 2026 05:34:48 GMT</lastBuildDate>
     <atom:link href="https://nishokvg.github.io/feed.xml" rel="self" type="application/rss+xml"/>
     <managingEditor>Nishok VG</managingEditor>
     <webMaster>Nishok VG</webMaster>
+  <item>
+    <title>Fine-Tuning a Support Ticket Router: My 16 GB Mac vs Fireworks</title>
+    <link>https://nishokvg.github.io/posts/fine-tuning-support-ticket-router-mac-fireworks/</link>
+    <guid isPermaLink="true">https://nishokvg.github.io/posts/fine-tuning-support-ticket-router-mac-fireworks/</guid>
+    <pubDate>Sat, 19 Sep 2026 00:00:00 GMT</pubDate>
+    <description>I fine-tuned a support-ticket router locally with MLX and on Fireworks. Both reached about 83% test accuracy, but a failed model export taught me the most.</description>
+    <category>Fine-Tuning</category>
+    <category>LoRA</category>
+    <category>MLX</category>
+    <category>Fireworks AI</category>
+    <category>LLM Evaluation</category>
+    <category>Python</category>
+    <category>MLOps</category>
+  </item>
   <item>
     <title>Evaluating a 10-Work Tamil Agentic GraphRAG: When Better Retrieval Did Not Mean Better Answers</title>
     <link>https://nishokvg.github.io/posts/evaluating-tamil-agentic-graphrag/</link>

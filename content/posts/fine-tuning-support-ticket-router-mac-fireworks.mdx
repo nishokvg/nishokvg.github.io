@@ -1,0 +1,178 @@
+---
+title: "Fine-Tuning a Support Ticket Router: My 16 GB Mac vs Fireworks"
+date: "2026-09-19"
+tags: ["Fine-Tuning", "LoRA", "MLX", "Fireworks AI", "LLM Evaluation", "Python", "MLOps"]
+excerpt: "I fine-tuned a support-ticket router locally with MLX and on Fireworks. Both reached about 83% test accuracy, but a failed model export taught me the most."
+category: "ai"
+published: true
+---
+
+Could I fine-tune a useful support-ticket router on my **16 GB Mac Mini M4**, and how would that compare with training on a cloud GPU?
+
+For my Week 5 project at The Gen Academy, I tried both. Locally, I trained a **Qwen 4B** model with MLX. On Fireworks, I trained a **Llama 3B** model on a dedicated H200. Both learned the routing task: test accuracy rose from roughly 41–44% before task-specific training to roughly 83% afterward.
+
+The final scores were one ticket apart. The bigger surprise came during local export, when a model that had trained successfully lost 19.1 percentage points of validation accuracy after merging and requantization.
+
+This is the story of the complete workflow: preparing the data, training on two setups, checking the exported model, and measuring what actually improved.
+
+![Hand-drawn project overview: prepare support tickets, split the data, fine-tune Qwen 4B locally and Llama 3B on Fireworks, evaluate the same 117 test tickets, and investigate the local export regression.](/support-ticket-finetuning-workflow.png)
+
+*AI-generated illustration of the project workflow. Metric labels reflect the saved experiment results; it is not a screenshot.*
+
+The [project repository](https://github.com/nishokvg/finetuning-compare) includes the scripts, configurations, prepared data, saved predictions, and measured comparison.
+
+## The task: route a ticket to one of seven teams
+
+The input was a short IT support ticket. The output had to be one of seven service categories:
+
+- Support general
+- Fileservice
+- O365
+- EOL
+- Software
+- Active Directory
+- Computer-Services
+
+These are service categories, not urgency levels. The task was to learn their boundaries from labeled examples and return the exact category name.
+
+The source dataset contained **585 tickets**. I reserved a test split, carved validation out of the remaining development data, and excluded two training examples that were near-duplicates of a test example.
+
+| Split | Tickets | Purpose |
+|---|---:|---|
+| Training | 372 | Learn the routing task |
+| Validation | 94 | Check progress and select the export |
+| Test | 117 | Measure the final configurations |
+
+The outer split used seed 42; validation used seed 43. Both platforms used the same prepared splits. Stable ticket IDs and hashes made it possible to verify that the evaluation compared the same examples.
+
+The test set stayed separate from checkpoint, prompt, and export selection. That separation mattered when the first local export failed: I could diagnose and choose a replacement using validation before measuring the final test result.
+
+## Why the final models differed
+
+The original assignment used `Qwen/Qwen3-1.7B-Base` with Colab and LLaMA Factory. My completed project extended that workflow with MLX and Fireworks, using different checkpoints.
+
+| Setting | Local Mac | Fireworks |
+|---|---|---|
+| Model | Qwen3-4B-Instruct-2507 | Llama-3.2-3B-Instruct |
+| Hardware | Mac Mini M4, 16 GB | One dedicated H200 |
+| Training method | MLX LoRA on a 4-bit base | Dedicated LoRA SFT |
+| Epochs / optimizer updates | 3 / 279 | 3 / 279 |
+| LoRA rank / alpha equivalent | 8 / 16 | 8 / 16 |
+| Learning rate | 0.0001 | 0.0001 |
+| Effective batch size | 4 through accumulation | 4 |
+| Context limit | 1024 tokens | 1024 tokens |
+| Loss | Assistant answer tokens only | Assistant answer tokens only |
+
+The initial Fireworks Qwen route hit a B200 quota restriction. A managed Llama SFT submission was also rejected; the dedicated H200 training route succeeded. Model availability, account quota, and training API support all affected the practical choice.
+
+Because model family, size, precision, and implementation differed, this is a **comparison of two practical setups**. It cannot isolate the effect of the hardware or cloud platform.
+
+## Training locally with MLX
+
+LoRA keeps the base model weights frozen and trains smaller low-rank updates to selected matrices. In this run, the base weights were stored at 4-bit precision while the adapter updates were trained separately. This reduced the memory needed for training state enough to make the chosen setup practical on my Mac.
+
+The local workflow was:
+
+1. Download the pinned Qwen source checkpoint and convert it to the MLX 4-bit format.
+2. Prepare the shared ticket splits and evaluate the baseline without a task adapter.
+3. Run a short pilot to check the training path.
+4. Train the full adapter for three epochs, using batch size one and four accumulation steps per update.
+5. Evaluate the adapter, export a standalone model, and evaluate the export separately.
+
+The full run took **24.96 minutes**, with a recorded peak MLX allocation of **3.03 GiB**. That memory figure is MLX allocation, not total Mac memory usage. The time includes loading and validation but excludes installation and model downloads.
+
+With the adapter attached, the model classified **85 of 94 validation tickets correctly: 90.4%**.
+
+## Training and evaluating on Fireworks
+
+The cloud workflow required more setup than simply selecting a model. The tokenizer and chat rendering had to match the training format, and the loss mask had to identify the assistant answer correctly.
+
+An authorized Meta download supplied the tokenizer. The conversion and masking checks covered all **466 training and validation conversations** before the dedicated training run.
+
+After training, I used a temporary inference deployment to evaluate both the baseline and the tuned model. The inference renderer used the same Llama role-header format as training, without injecting date text. The deployment was deleted after evaluation, and the training GPU was released. The registered adapter remained as stored model data; that did not mean a serving endpoint stayed online.
+
+The cloud run took **9.93 minutes**, including provisioning, training, validation, checkpoint work, registration, and cleanup. Its timing boundary differs from the local run, so these are operational timings rather than isolated GPU-speed measurements.
+
+The September 12 billing snapshot showed **$0.87 in total account spending for the period**, including rounded categories of $0.81 for training and $0.05 for inference/deployments. This was an observed dashboard amount subject to billing lag, not a settled project invoice. No credit purchase or automatic reload was performed.
+
+## The export surprise: 90.4% → 71.3% → 90.4%
+
+The first local export merged the adapter into the base and stored the merged projections at 4-bit precision. The files saved, the model loaded, and inference ran. But routing quality regressed sharply.
+
+| Local artifact | Correct / 94 | Validation accuracy | Invalid outputs |
+|---|---:|---:|---:|
+| Base with LoRA adapter | 85 | 90.4% | 0 |
+| 4-bit merged export | 67 | 71.3% | 7 |
+| 8-bit projection export | 85 | 90.4% | 0 |
+
+I rebuilt the export from the same trained adapter with **8-bit merged projections**. The unchanged embeddings remained at 4-bit. No additional training was needed, and validation accuracy returned to 90.4%.
+
+![Validation accuracy on the same 94 tickets: LoRA adapter 90.4%, 4-bit merged export 71.3%, and 8-bit projection export 90.4%.](/support-ticket-export-validation.png)
+
+I selected that export using validation. On the separate test set, it subsequently matched **all 117 predictions** from the model with the adapter attached. Equal validation accuracy does not imply identical validation predictions; the exact prediction match was observed on the test set.
+
+The regression and recovery are consistent with a precision-related export problem. I did not isolate which numerical changes caused each error, so I am not claiming that all 4-bit merges fail or that a specific rounding mechanism was proved here.
+
+What the experiment established was enough to change my workflow:
+
+> Evaluate the exact artifact you will deploy. Training evaluation alone does not exercise the final export path.
+
+## The measured comparison
+
+Both baselines used their respective instruction-tuned models without the task adapter. Each received the same routing prompt as its tuned counterpart. The evaluator used temperature zero, at most 16 output tokens, and exact label matching after trimming whitespace and normalizing case. Invalid outputs counted as errors.
+
+All results below use the same **117 held-out test tickets**:
+
+| Setup | Baseline accuracy | Tuned accuracy | Tuned macro F1 |
+|---|---:|---:|---:|
+| Mac: Qwen 4B | 44.4% | 82.9% — 97/117 | 0.794 |
+| Fireworks: Llama 3B | 41.0% | 83.8% — 98/117 | 0.810 |
+
+That is a gain of **38.5 percentage points locally** and **42.7 percentage points on Fireworks**. Macro F1 averages the class-level F1 scores equally, making smaller categories more visible than overall accuracy alone.
+
+The Mac model alone was correct on six tickets; Fireworks alone was correct on seven. The net advantage was one ticket. These results do not establish a reliable platform winner.
+
+Median inference latency was about **0.511 seconds** for the recommended local export and **0.218 seconds** for the tuned Fireworks model. Cloud requests included network travel; model loading and provisioning were excluded. Requests were sequential, so this was not a throughput benchmark.
+
+## What the overall score hid
+
+Active Directory remained difficult. Recall was **4/9 locally** and **3/9 on Fireworks**, even though the cloud setup had slightly higher overall accuracy.
+
+Both tuned models passed **four of the five original smoke tests**. The generic account-creation ticket remained problematic relative to related labels in the dataset. I preserved that failure rather than changing the expected label or adding a rule to make the demo pass.
+
+Each class had only 8–30 test examples, so per-class differences were noisy. The next useful improvement would be to review ambiguous labels and collect more representative examples for weak categories, then evaluate on new held-out data. Repeatedly tuning against this test set would make it less useful as an independent check.
+
+## What I learned
+
+**A consumer Mac can support a useful fine-tuning experiment.** This particular 4B setup ran on 16 GB with quantization and LoRA. That is evidence for this configuration, not a promise that any model or context length will fit.
+
+**Cloud training includes operational work.** Eligibility, quota, tokenizer compatibility, deployment lifecycle, and cleanup were all part of completing the experiment.
+
+**The baseline needs to be comparable.** Measuring each model before and after task training with the same prompt helped separate training gains from changes to the evaluation format.
+
+**Export deserves its own evaluation.** The largest unexpected local regression happened after training. A model that loads successfully still needs to demonstrate that it retained the behavior we trained.
+
+**Per-class errors matter.** An overall score near 83% did not resolve the weak Active Directory category. A useful evaluation should tell me what to improve next.
+
+That last point connects with my [Tamil Agentic GraphRAG evaluation](/posts/evaluating-tamil-agentic-graphrag/): a better intermediate result does not automatically establish a better final system.
+
+## Try the local demo and inspect the evidence
+
+After following the repository setup and model-preparation instructions, the local demo command is:
+
+```sh
+.venv/bin/python scripts/classify.py "Please install Adobe Acrobat on my computer."
+```
+
+The recorded run returned `Software`. Model weights and credentials are excluded from the repository, so a fresh clone needs the documented setup steps; cloning alone does not download the model.
+
+- [Project repository and setup](https://github.com/nishokvg/finetuning-compare)
+- [Full measured report](https://github.com/nishokvg/finetuning-compare/blob/main/results/REPORT.md)
+- [Step-by-step local and cloud walkthrough](https://github.com/nishokvg/finetuning-compare/blob/main/PROJECT_WALKTHROUGH.md)
+- [Local merge implementation](https://github.com/nishokvg/finetuning-compare/blob/main/scripts/merge_local.py)
+- [Saved comparison notebook](https://github.com/nishokvg/finetuning-compare/blob/main/Comparison_Results.ipynb)
+- [Label audit and smoke-test limitation](https://github.com/nishokvg/finetuning-compare/blob/main/results/label-audit.md)
+
+The notebook displays results derived from the actual saved experiments; training ran through scripts rather than those notebook cells.
+
+This project extends [The Gen Academy's support-ticket router exercise](https://github.com/The-Gen-Academy/5A-Fine-Tune-a-Support-Ticket-Router). Thanks to Aishwarya Srinivasan and Arvind Narayanamurthy for encouraging us to learn by building and evaluating what we build.
